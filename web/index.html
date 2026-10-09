@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7f2"><title>MuzzleID — Cattle identity, clearly</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/styles.css"><link rel="stylesheet" href="/assets/polish.css"><link rel="stylesheet" href="/assets/mobile-fixes.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#landing"><span class="brand-mark">M</span><span>Muzzle<span class="brand-light">ID</span><small>BIOMETRIC IDENTITY</small></span></a>
+    <div class="org"><span class="org-icon">◈</span><span>Field Operations<small>Demo organization</small></span><span class="chev">⌄</span></div>
+    <nav aria-label="Main navigation">
+      <p class="nav-label">WORKSPACE</p>
+      <a class="nav-item" href="#overview"><span>▦</span> Dashboard</a>
+      <a class="nav-item" href="#animals"><span>◉</span> Animal registry</a>
+      <a class="nav-item" href="#register"><span>＋</span> Register animal</a>
+      <a class="nav-item" href="#verify"><span>⌕</span> Verify identity</a>
+      <a class="nav-item" href="#history"><span>◷</span> Verification history</a>
+      <p class="nav-label section-gap">OPERATIONS</p>
+      <a class="nav-item disabled" href="#insurance"><span>◇</span> Insurance records <em>Planned</em></a>
+      <a class="nav-item disabled" href="#alerts"><span>⚑</span> Review alerts <em>Planned</em></a>
+      <a class="nav-item disabled" href="#analytics"><span>▤</span> Analytics <em>Planned</em></a>
+      <a class="nav-item disabled" href="#reports"><span>▤</span> Reports <em>Planned</em></a>
+      <a class="nav-item" href="#system"><span>⌁</span> System status</a>
+      <a class="nav-item" href="#settings"><span>⚙</span> Settings</a>
+    </nav>
+    <div class="side-bottom"><div class="user-avatar">SO</div><div>Soham Operator<small>Organization admin</small></div><span class="chev">⋯</span></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div><span class="crumb">Workspace</span><span class="slash">/</span><strong id="page-label">Dashboard</strong></div><div class="top-right"><label class="global-search"><span>⌕</span><input id="global-search" type="search" placeholder="Search animals" aria-label="Search animals"></label><span class="env"><i></i> MVP environment</span><a class="profile-link" href="#settings" aria-label="Profile and settings">SO</a></div></header>
+    <section class="content" id="overview">
+      <div class="welcome" data-view="overview"><div><p class="eyebrow">FIELD OPERATIONS <span class="dot">·</span> MUZZLEID MVP</p><h1>Good morning, Soham</h1><p class="subhead">A clear view of your cattle identity operations.</p></div><a href="#register" class="button primary">＋ Register an animal</a></div>
+      <div class="landing-hero route-hidden" data-view="landing"><p class="eyebrow">CATTLE IDENTITY, CLEARLY</p><h1>Build trusted animal records<br>from the muzzle up.</h1><p>Register animal details and reference images in one field-ready workspace. Biometric identification remains unavailable until the model pipeline is validated.</p><a href="#overview" class="button primary">Open workspace →</a><a href="#register" class="button secondary">Register an animal</a><span class="landing-note">MVP prototype · No validated identity claims</span></div>
+      <div class="status-banner" data-view="overview system"><span class="status-icon">i</span><div><strong id="status-title">Biometric engine is not configured</strong><p id="status-description">Animal records and image uploads are available. Identity matching will become available after model training and threshold validation.</p></div><span class="status-tag" id="status-tag">SETUP REQUIRED</span></div>
+      <div class="metrics" data-view="overview">
+        <article class="metric"><div class="metric-top"><span>Registered animals</span><span class="metric-icon green">◉</span></div><strong id="animal-count">—</strong><p>Biometric profiles <b>Not available</b></p></article>
+        <article class="metric"><div class="metric-top"><span>Verifications today</span><span class="metric-icon blue">⌕</span></div><strong>—</strong><p>Awaiting validated model</p></article>
+        <article class="metric"><div class="metric-top"><span>Identity alerts</span><span class="metric-icon amber">⚑</span></div><strong>—</strong><p>Alert workflow <b>Planned</b></p></article>
+        <article class="metric"><div class="metric-top"><span>System status</span><span class="metric-icon green">⌁</span></div><strong class="status-value" id="system-status">Checking…</strong><p id="engine-status">Connecting to MuzzleID API</p></article>
+      </div>
+      <div class="grid-main" data-view="overview">
+        <article class="panel activity"><div class="panel-heading"><div><h2>Recent activity</h2><p>Latest registration and verification events</p></div><a href="#history">View history →</a></div><div id="recent" class="empty-state"><span class="empty-mark">◷</span><strong>No activity yet</strong><p>New animal registrations and identity checks will appear here.</p></div></article>
+        <article class="panel quick"><div class="panel-heading"><div><h2>Quick actions</h2><p>Common field workflows</p></div></div><a href="#register" class="quick-item"><span class="quick-icon green">＋</span><span><strong>Register an animal</strong><small>Create a record and upload muzzle images</small></span><b>→</b></a><a href="#verify" class="quick-item"><span class="quick-icon blue">⌕</span><span><strong>Verify identity</strong><small>Check an image against registered animals</small></span><b>→</b></a><a href="#animals" class="quick-item"><span class="quick-icon lilac">◉</span><span><strong>Browse registry</strong><small>Review animal records</small></span><b>→</b></a></article>
+      </div>
+      <article class="panel table-panel route-hidden" id="animals" data-view="animals"><div class="panel-heading"><div><h2>Animal database</h2><p id="registry-summary">Records in this organization</p></div><a href="#register" class="button secondary">＋ Add animal</a></div><div class="table-toolbar"><label>Filter records <input id="animal-filter" type="search" placeholder="Name, ear tag, breed or ID"></label><label>Sort by <select id="animal-sort"><option value="created_at">Recently added</option><option value="name">Name</option><option value="ear_tag">Ear tag</option></select></label></div><div class="table-wrap"><table><thead><tr><th>ANIMAL</th><th>EAR TAG</th><th>BREED</th><th>IMAGES</th><th>PROFILE STATUS</th><th></th></tr></thead><tbody id="animal-rows"><tr><td colspan="6" class="table-empty">Loading registry…</td></tr></tbody></table></div><div class="table-footer"><span id="page-count">—</span><div><button id="previous-page" class="button secondary" type="button">← Previous</button><button id="next-page" class="button secondary" type="button">Next →</button></div></div></article>
+      <div class="forms-grid route-hidden" data-view="register verify">
+        <article class="panel form-panel route-hidden" id="register" data-view="register"><div class="panel-heading"><div><h2>Register an animal</h2><p>Record details and add muzzle images</p></div><span class="step">01 / 01</span></div><form id="register-form"><div class="form-row"><label>Animal name<input name="name" maxlength="120" placeholder="e.g. Lakshmi"></label><label>Ear tag<input name="ear_tag" maxlength="120" placeholder="e.g. IN-4821"></label></div><div class="form-row"><label>Breed<input name="breed" maxlength="120" placeholder="e.g. Gir"></label><label>Sex<select name="sex"><option value="">Select</option><option>Female</option><option>Male</option></select></label></div><label>Date of birth<input name="date_of_birth" type="date"></label><label class="upload-box" id="register-dropzone"><input id="register-files" name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple required><span class="upload-icon">↑</span><strong>Choose or drop muzzle images</strong><small>JPEG, PNG or WebP · up to 8 images · 12 MB each</small></label><div id="image-previews" class="image-previews" aria-live="polite"></div><p class="form-note">Images are checked for readability. Record persistence is confirmed separately from biometric profile creation.</p><button class="button primary full" type="submit">Save animal record <span>→</span></button><div class="form-result" id="register-result" role="status" aria-live="polite"></div></form></article>
+        <article class="panel form-panel route-hidden" id="verify" data-view="verify"><div class="panel-heading"><div><h2>Identify an animal</h2><p>Search the registered biometric gallery</p></div><span class="step">01 / 01</span></div><form id="verify-form"><label class="upload-box verify-upload"><input name="image" type="file" accept="image/jpeg,image/png,image/webp" required><span class="upload-icon">⌕</span><strong>Upload a cattle muzzle image</strong><small>JPEG, PNG or WebP · up to 12 MB</small></label><div class="requirements"><span>✓ Clear, front-facing muzzle</span><span>✓ Good lighting and focus</span><span>✓ No muzzle obstruction</span></div><button class="button primary full" type="submit">Check identity <span>→</span></button><div class="form-result" id="verify-result" role="status" aria-live="polite"></div><div class="locked"><span>▣</span><div><strong>Verification currently unavailable</strong><small>Requires trained model, indexed gallery and validated decision thresholds.</small></div></div></form></article>
+      </div>
+      <article class="panel history-panel route-hidden" id="history" data-view="history"><div class="panel-heading"><div><h2>Verification history</h2><p>Audit trail for recent identity checks</p></div></div><div id="history-list" class="empty-state compact"><span class="empty-mark">◷</span><strong>No verification history</strong><p>Verification events will be listed here when the biometric engine is active.</p></div></article>
+      <article class="panel detail-panel route-hidden" id="animal-detail" data-view="details"><div id="animal-detail-content" class="empty-state compact">Loading animal record…</div></article>
+      <article class="panel planned-panel route-hidden" data-view="planned"><span class="status-tag">PLANNED</span><h2 id="planned-title">Planned capability</h2><p id="planned-description">This workflow is not available in the current MVP.</p><a class="button secondary" href="#overview">Back to dashboard</a></article>
+      <article class="roadmap" id="planned" data-view="overview"><div><p class="eyebrow">PRODUCT ROADMAP</p><h2>Built for the field.<br>Designed to grow.</h2><p>Capabilities shown as planned are not available in this MVP.</p></div><div class="roadmap-items"><span><i>01</i> Biometric MVP <b>In progress</b></span><span><i>02</i> Field-agent mobile app <b>Planned</b></span><span><i>03</i> Insurance API integrations <b>Planned</b></span><span><i>04</i> Enterprise &amp; government <b>Planned</b></span></div></article>
+      <footer data-view="overview animals register verify history details planned landing system"><span>© 2026 MuzzleID</span><span>Prototype · Not validated for insurance decisions</span><a href="/docs" target="_blank">API documentation ↗</a></footer>
+    </section>
+  </main>
+  <script src="/assets/api.js" defer></script><script src="/assets/app.js" defer></script>
+</body></html>

@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: muzzleid
+      POSTGRES_USER: muzzleid
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U muzzleid -d muzzleid"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://muzzleid:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/muzzleid
+      MODEL_PATH: /app/models/best_model.pt
+      UPLOAD_DIR: /app/storage/uploads
+    volumes:
+      - ./models:/app/models:ro
+      - uploads:/app/storage/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+volumes:
+  postgres_data:
+  uploads:
