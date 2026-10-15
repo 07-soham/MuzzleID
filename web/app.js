@@ -6,7 +6,7 @@ const PLANNED = {
   alerts: 'Duplicate and suspicious identity review is planned. There are no active fraud alerts in this MVP.',
   analytics: 'Operational analytics will be available after validated verification events exist.',
   reports: 'Exportable reports are planned. No performance or customer metrics are available.',
-  settings: 'Profile, organization and access controls are planned. The current MVP has no authentication or role enforcement.',
+  settings: 'Additional user profiles, organization isolation and role controls are planned. The prototype currently uses one configured operator password.',
 };
 let registryOffset = 0;
 let registryQuery = '';
@@ -17,12 +17,20 @@ async function refreshHealth() {
   try {
     const health = await MuzzleApi.health();
     $('#system-status').textContent = health.database_available ? 'Online' : 'Degraded';
-    $('#engine-status').textContent = health.calibrated_thresholds_available ? 'Pipeline configured' : 'Biometric engine unavailable';
-    $('#status-title').textContent = health.database_available ? 'Biometric engine is not configured' : 'Database connection is unavailable';
-    $('#status-description').textContent = health.database_available
-      ? 'Animal records and image uploads are available. Matching requires trained model weights, a detector, a gallery index and calibrated thresholds.'
-      : 'The API could not confirm its database connection. Registry and registration actions may fail until the database is available.';
-    $('#status-tag').textContent = health.database_available ? 'SETUP REQUIRED' : 'DATABASE ISSUE';
+    $('#engine-status').textContent = health.calibrated_thresholds_available ? 'Prototype matching active' : 'Biometric engine unavailable';
+    $('#status-title').textContent = !health.database_available ? 'Database connection is unavailable' : health.calibrated_thresholds_available ? 'Prototype biometric matching is available' : 'Biometric engine is not configured';
+    $('#status-description').textContent = !health.database_available
+      ? 'The API could not confirm its database connection. Registry and registration actions may fail until the database is available.'
+      : health.calibrated_thresholds_available
+      ? 'Prototype full-image embeddings are enabled. No muzzle detector or unseen-animal validation is available; every match requires human confirmation.'
+      : 'Animal records and image uploads are available. Matching requires a trained checkpoint and its matching validation calibration.';
+    $('#status-tag').textContent = !health.database_available ? 'DATABASE ISSUE' : health.calibrated_thresholds_available ? 'PROTOTYPE' : 'SETUP REQUIRED';
+    const lock = document.querySelector('#verify-form .locked');
+    if (lock) {
+      lock.hidden = health.calibrated_thresholds_available;
+      lock.querySelector('strong').textContent = health.calibrated_thresholds_available ? 'Prototype mode only' : 'Verification currently unavailable';
+      lock.querySelector('small').textContent = health.calibrated_thresholds_available ? 'No muzzle detector or open-set validation. Confirm every result in person.' : 'Training and calibration artifacts are not installed.';
+    }
   } catch (error) {
     $('#system-status').textContent = 'Offline';
     $('#engine-status').textContent = 'API unavailable';
@@ -75,7 +83,8 @@ async function showAnimalDetails(id) {
   host.innerHTML = '<div class="empty-state compact"><strong>Loading animal record…</strong></div>';
   try {
     const animal = await MuzzleApi.animal(id);
-    host.innerHTML = `<a class="back-link" href="#animals">← Animal database</a><div class="detail-heading"><div><p class="eyebrow">ANIMAL PROFILE</p><h2>${esc(animal.name || 'Unnamed animal')}</h2><p class="subhead">Record ${esc(animal.id)}</p></div><span class="tag">${esc(animal.status.replaceAll('_', ' '))}</span></div><div class="detail-grid"><div><small>EAR TAG</small><strong>${esc(animal.ear_tag || 'Not available')}</strong></div><div><small>BREED</small><strong>${esc(animal.breed || 'Not available')}</strong></div><div><small>SEX</small><strong>${esc(animal.sex || 'Not available')}</strong></div><div><small>DATE OF BIRTH</small><strong>${esc(animal.date_of_birth || 'Not available')}</strong></div><div><small>REFERENCE IMAGES</small><strong>${animal.images.length} saved</strong></div><div><small>REGISTERED</small><strong>${esc(new Date(animal.created_at).toLocaleString())}</strong></div></div><div class="detail-images"><h3>Stored reference images</h3>${animal.images.length ? animal.images.map((image,index) => `<div class="stored-image"><span>Reference ${index + 1}</span><small>${image.width} × ${image.height}</small><code>${esc(image.content_sha256.slice(0, 16))}…</code></div>`).join('') : '<p>No stored reference images.</p>'}<p class="form-note">Stored files are not served from the public web path. Hashes are shown for record integrity.</p></div><div class="status-banner detail-notice"><span class="status-icon">i</span><div><strong>Biometric profile: ${esc(animal.status.replaceAll('_', ' '))}</strong><p>Embedding and gallery indexing are unavailable until the model pipeline is configured.</p></div></div>`;
+    const prototypeReady = animal.status === 'prototype_ready';
+    host.innerHTML = `<a class="back-link" href="#animals">← Animal database</a><div class="detail-heading"><div><p class="eyebrow">ANIMAL PROFILE</p><h2>${esc(animal.name || 'Unnamed animal')}</h2><p class="subhead">Record ${esc(animal.id)}</p></div><span class="tag">${esc(animal.status.replaceAll('_', ' '))}</span></div><div class="detail-grid"><div><small>EAR TAG</small><strong>${esc(animal.ear_tag || 'Not available')}</strong></div><div><small>BREED</small><strong>${esc(animal.breed || 'Not available')}</strong></div><div><small>SEX</small><strong>${esc(animal.sex || 'Not available')}</strong></div><div><small>DATE OF BIRTH</small><strong>${esc(animal.date_of_birth || 'Not available')}</strong></div><div><small>REFERENCE IMAGES</small><strong>${animal.images.length} saved</strong></div><div><small>REGISTERED</small><strong>${esc(new Date(animal.created_at).toLocaleString())}</strong></div></div><div class="detail-images"><h3>Stored reference images</h3>${animal.images.length ? animal.images.map((image,index) => `<div class="stored-image"><span>Reference ${index + 1}</span><small>${image.width} × ${image.height}</small><code>${esc(image.content_sha256.slice(0, 16))}…</code></div>`).join('') : '<p>No stored reference images.</p>'}<p class="form-note">Stored files are not served from the public web path. Hashes are shown for record integrity.</p></div><div class="status-banner detail-notice"><span class="status-icon">i</span><div><strong>Biometric profile: ${esc(animal.status.replaceAll('_', ' '))}</strong><p>${prototypeReady ? 'Prototype full-image embeddings are indexed. The model has no muzzle detector or unseen-animal validation; confirm identity in person.' : 'Embedding and gallery indexing are unavailable until a trained model and matching calibration are installed.'}</p></div></div>`;
   } catch (error) {
     host.innerHTML = `<a class="back-link" href="#animals">← Animal database</a><div class="empty-state compact error-text">${esc(error.message)}</div>`;
   }
@@ -108,6 +117,7 @@ const uploadInput = $('#register-files');
 const previewArea = $('#image-previews');
 let idempotencyKey = crypto.randomUUID();
 let submitInProgress = false;
+let previewUrls = [];
 
 function setFiles(files) {
   const transfer = new DataTransfer();
@@ -117,9 +127,11 @@ function setFiles(files) {
 }
 
 function renderPreviews() {
+  previewUrls.forEach(url => URL.revokeObjectURL(url));
+  previewUrls = [];
   const files = [...uploadInput.files];
   previewArea.innerHTML = files.map((file,index) => `<div class="image-preview"><img alt="Preview of ${esc(file.name)}"><div><strong>${esc(file.name)}</strong><small>${(file.size / 1024 / 1024).toFixed(2)} MB</small></div><button type="button" class="remove-image" data-index="${index}" aria-label="Remove ${esc(file.name)}">×</button></div>`).join('');
-  previewArea.querySelectorAll('img').forEach((image,index) => { image.src = URL.createObjectURL(files[index]); });
+  previewArea.querySelectorAll('img').forEach((image,index) => { const url = URL.createObjectURL(files[index]); previewUrls.push(url); image.src = url; });
   previewArea.querySelectorAll('.remove-image').forEach(button => button.addEventListener('click', () => setFiles(files.filter((_,index) => index !== Number(button.dataset.index)))));
 }
 
@@ -146,7 +158,7 @@ registerForm.addEventListener('submit', async event => {
     if (!response.persisted) throw new Error('The server did not confirm that the record was persisted.');
     result.className = 'form-result success';
     result.textContent = `${response.message} Record ID: ${response.id}`;
-    registerForm.reset(); previewArea.innerHTML = ''; idempotencyKey = crypto.randomUUID();
+    registerForm.reset(); renderPreviews(); idempotencyKey = crypto.randomUUID();
     registryOffset = 0; await refreshRegistry();
   } catch (error) {
     result.className = 'form-result error'; result.textContent = error.message;
@@ -161,7 +173,7 @@ $('#verify-form').addEventListener('submit', async event => {
   submit.disabled = true; result.className = 'form-result'; result.textContent = 'Checking image and pipeline availability…';
   try {
     const response = await MuzzleApi.verify(new FormData(event.currentTarget));
-    result.className = 'form-result success'; result.textContent = `${response.decision}: ${response.animal_id}`;
+    result.className = 'form-result success'; result.textContent = `PROTOTYPE ONLY — ${response.decision}${response.animal_id ? `: ${response.animal_id}` : ''}. Human confirmation required; do not use as ownership or insurance evidence.`;
   } catch (error) { result.className = 'form-result error'; result.textContent = error.message; }
   finally { submit.disabled = false; }
 });
@@ -182,4 +194,37 @@ $('#animal-sort').addEventListener('change', event => { registrySort = event.tar
 $('#previous-page').addEventListener('click', () => { registryOffset = Math.max(0, registryOffset - pageSize); refreshRegistry(); });
 $('#next-page').addEventListener('click', () => { registryOffset += pageSize; refreshRegistry(); });
 window.addEventListener('hashchange', route);
-refreshHealth(); route();
+window.addEventListener('muzzleid:session-expired', () => {
+  document.body.classList.remove('authenticated'); authGate.hidden = false;
+  $('#login-result').textContent = 'Your operator session expired. Sign in again.';
+});
+
+const authGate = $('#auth-gate');
+$('#login-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const result = $('#login-result');
+  const button = event.currentTarget.querySelector('[type=submit]');
+  button.disabled = true; result.textContent = 'Signing in…'; result.className = 'form-result';
+  try {
+    await MuzzleApi.login($('#operator-password').value);
+    document.body.classList.add('authenticated'); authGate.hidden = true;
+    $('#operator-password').value = ''; result.textContent = '';
+    await refreshHealth(); route();
+  } catch (error) { result.textContent = error.message; result.className = 'form-result error'; }
+  finally { button.disabled = false; }
+});
+$('#logout-button').addEventListener('click', async () => {
+  try { await MuzzleApi.logout(); } catch { /* Clear the browser gate if the API is unavailable. */ }
+  document.body.classList.remove('authenticated'); authGate.hidden = false;
+  $('#login-result').textContent = 'Signed out.'; $('#operator-password').focus();
+});
+(async () => {
+  try {
+    const session = await MuzzleApi.session();
+    if (!session.configured) $('#login-result').textContent = 'Server setup required: configure the operator password and session secret in .env.';
+    if (session.authenticated) {
+      document.body.classList.add('authenticated'); authGate.hidden = true;
+      await refreshHealth(); route();
+    } else authGate.hidden = false;
+  } catch { authGate.hidden = false; $('#login-result').textContent = 'MuzzleID API is unavailable.'; }
+})();

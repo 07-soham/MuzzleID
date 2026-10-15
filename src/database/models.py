@@ -34,6 +34,14 @@ class AnimalImage(Base):
     animal: Mapped[Animal] = relationship(back_populates="images")
 
 
+class ImageEmbedding(Base):
+    """Embedding derived from one reference image by a specific model version."""
+    __tablename__ = "image_embeddings"
+    image_id: Mapped[str] = mapped_column(ForeignKey("animal_images.id", ondelete="CASCADE"), primary_key=True)
+    model_version: Mapped[str] = mapped_column(String(64), index=True)
+    vector_encrypted: Mapped[str] = mapped_column(Text)
+
+
 class RegistrationRequest(Base):
     """Persisted idempotency key so a retried multipart request does not create another animal."""
     __tablename__ = "registration_requests"

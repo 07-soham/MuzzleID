@@ -17,7 +17,12 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://muzzleid:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/muzzleid
       MODEL_PATH: /app/models/best_model.pt
+      CALIBRATION_PATH: /app/models/calibration.json
       UPLOAD_DIR: /app/storage/uploads
+      MUZZLEID_OPERATOR_PASSWORD: ${MUZZLEID_OPERATOR_PASSWORD:?Set MUZZLEID_OPERATOR_PASSWORD in .env}
+      MUZZLEID_SESSION_SECRET: ${MUZZLEID_SESSION_SECRET:?Set MUZZLEID_SESSION_SECRET in .env}
+      MUZZLEID_DATA_KEY: ${MUZZLEID_DATA_KEY:?Set MUZZLEID_DATA_KEY in .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - ./models:/app/models:ro
       - uploads:/app/storage/uploads
@@ -25,7 +30,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 volumes:
   postgres_data:
   uploads:

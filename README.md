@@ -1,164 +1,147 @@
 # MuzzleID
 
-**Cattle muzzle identity, built for careful verification.**
+**A secured prototype for cattle records and muzzle-image identity research.**
 
-MuzzleID is an early-stage web application foundation for organizing cattle records and developing muzzle-biometric identification. It combines a FastAPI service, a searchable animal registry, image uploads, and a simple operator portal.
+MuzzleID combines a FastAPI service, an operator portal, encrypted image and embedding storage, and a reproducible ResNet-50 metric-learning training workflow. The model is intended for research and demonstration only.
 
-> [!IMPORTANT]
-> **Prototype only.** This repository does not contain a trained biometric checkpoint, a YOLO detector, a FAISS gallery index, or calibrated decision thresholds. Animal registration stores metadata and reference images as `pending_model`; it does not create a biometric profile. Verification deliberately returns HTTP `503` while the pipeline is unavailable. Do not use MuzzleID for insurance, ownership, or other consequential decisions.
+> [!WARNING]
+> Prototype identity suggestions are not reliable evidence of ownership. The current pipeline embeds the full image, has no muzzle detector or crop, and has not been validated on identities known to be absent from training. Do not use it for insurance, fraud, veterinary, ownership, or other consequential decisions. Require human confirmation.
 
-## What works today
+## Current capabilities
 
-| Capability | Status |
+| Area | Status |
 |---|---|
-| Operator portal with dashboard, registry, registration, identify, history, details, and system-status views | Available |
-| Animal metadata and 1–8 reference-image registration | Available; saved as `pending_model` |
-| Upload validation, generated storage names, and database persistence | Available |
-| Registration retries with an `Idempotency-Key` | Available |
-| Registry search, sorting, pagination, and animal details | Available |
-| Image quality checks | Decode and minimum-dimension checks only |
-| ResNet-50 512D normalized embedding model definition | Code present; not trained or validated here |
-| Triplet metric-learning loss definition | Code present; training pipeline not implemented |
-| YOLO detection, FAISS search, calibrated decisions, biometric verification | Unavailable |
-| Insurance, fraud review, analytics, reports, roles, and external integrations | Planned |
+| Operator portal, registry search, registration, details, system status | Available after operator sign-in |
+| Registration and gallery reference images | AES-GCM encrypted at rest; max 8 images × 12 MiB |
+| Operator sessions | HttpOnly, SameSite=Strict signed cookie; configured password and session secret required |
+| Upload checks | Format allowlist, decoding, dimensions, animation rejection, request/image limits |
+| Model training | Reproducible train/validation split over `data/train/dataset`; exact byte duplicates are kept on one side |
+| Embedding network | ImageNet-initialized ResNet-50 with a 512-dimensional normalized embedding head |
+| Training objective | Batch-hard triplet loss with identity-balanced batches |
+| Validation | Checkpoint selection by known-identity top-1; thresholds estimated from validation impostor-score quantiles |
+| Gallery and verification | Encrypted database embeddings and cosine prototype search; results clearly labeled prototype-only |
+| Muzzle detection, crop, open-set evaluation, external test evaluation | Not available; labels/provenance needed to implement and assess these safely |
+| Multi-user roles, organization isolation, migrations, retention controls | Not available |
 
-The portal and API run on the same origin. The frontend is static HTML, CSS, and JavaScript served by FastAPI; there is no separate Node/React build step.
+No model weights or calibration file are included in Git. They are generated locally by training and ignored by `.gitignore`.
 
-## Architecture
+## Security setup
 
-The target biometric flow is shown below. The model, detector, index, and calibrated decision stages are **planned and not currently connected**.
-
-```mermaid
-flowchart LR
-  Upload[Image upload] --> Quality[Decode and basic size validation]
-  Quality --> Detector[YOLO muzzle detection - planned]
-  Detector --> Crop[Muzzle crop - planned]
-  Crop --> Encoder[ResNet-50 / 512D embedding - definition only]
-  Encoder --> Gallery[FAISS gallery - planned]
-  Gallery --> Decision[Calibrated VERIFIED / REVIEW / UNKNOWN - planned]
-  Decision --> API[FastAPI]
-  API --> DB[(SQLite local / PostgreSQL Compose)]
-  API --> Portal[Operator portal]
-```
-
-### Current service routes
-
-| Method | Route | Behavior |
-|---|---|---|
-| `GET` | `/api/health` | Reports API/database status and availability flags for model, detector, index, and thresholds. |
-| `GET` | `/api/animals?q=&offset=&limit=&sort=` | Searchable, paginated registry. Sort options: `created_at`, `name`, `ear_tag`. |
-| `GET` | `/api/animals/{id}` | Animal metadata and stored reference-image metadata. |
-| `POST` | `/api/animals` | Multipart animal registration; requires an `Idempotency-Key` header and 1–8 `images`. |
-| `POST` | `/api/verify` | Validates the uploaded image, then returns `503` until complete model artifacts and thresholds exist. |
-| `GET` | `/api/history` | Stored verification events; remains empty until verification is implemented. |
-
-Interactive API documentation is served at `/docs` while the service is running.
-
-## Quick start: Windows PowerShell
-
-Python 3.10 or 3.11 is recommended. The lightweight dependency file runs the portal/API without installing the ML stack.
+The service refuses to issue an authenticated session without an operator password and a 32-byte session secret. It also refuses image registration and gallery inference unless a valid 32-byte encryption key is configured. Generate three independent values:
 
 ```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements-mvp.txt
-
-$env:DATABASE_URL = "sqlite:///./muzzleid.db"
-$env:UPLOAD_DIR = "./storage/uploads"
-python -m uvicorn src.api.main:app --reload
+python -c "import secrets; print(secrets.token_urlsafe(24))" # operator password
+python -c "import secrets; print(secrets.token_urlsafe(32))" # session secret
+python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())" # data key
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) for the portal and [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the API.
+Copy `.env.example` to `.env`, then set `MUZZLEID_OPERATOR_PASSWORD`, `MUZZLEID_SESSION_SECRET`, and `MUZZLEID_DATA_KEY` to the generated values. Keep `.env` private and out of Git. Losing or rotating the data key without re-encrypting records makes stored images and vectors unreadable. Back it up securely.
 
-Settings can also be placed in a local `.env` file; `.env` is ignored by Git. `.env.example` provides local SQLite defaults and a blank `POSTGRES_PASSWORD` field. Docker Compose requires you to set that value privately before starting the PostgreSQL stack. Explicit process environment variables take precedence over `.env` values.
+Uploads and embedding vectors are encrypted with AES-GCM, with per-record associated data. The database stores image hashes and encrypted vectors. Login, registration, and verification have per-process rate limits. The browser session cookie is `HttpOnly` and `SameSite=Strict`; enable `COOKIE_SECURE=true` behind HTTPS. Compose publishes only on `127.0.0.1` by default. Do not expose the development server directly to the public internet.
+
+For an existing local install with unencrypted uploads, back up the database and upload directory, then preview and apply the migration after setting the data key:
+
+```powershell
+python -m src.security.migrate_storage
+python -m src.security.migrate_storage --apply
+```
+
+This is a single-operator prototype, not a hardened multi-tenant service. Rate limits are process-local, there is no MFA/role system, audit retention policy, key-management service, malware scanner, or database migration framework. Restrict host access, keep backups encrypted, and put a properly configured HTTPS reverse proxy and firewall in front of any shared deployment.
+
+## Install and train
+
+Use a virtual environment. The training script requires a platform-compatible PyTorch and torchvision build; follow the official [PyTorch installation selector](https://pytorch.org/get-started/locally/) for CPU or the correct GPU/CUDA version.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-ml.txt
+```
+
+`data/train/dataset/<identity>/*` is the only dataset read by training. The separate `data/test` tree is deliberately not used: its numeric identities have not been mapped to the training labels, so identity-level leakage cannot be ruled out. The script deduplicates exact file bytes before splitting each training identity into train and validation images.
+
+```powershell
+python -m src.training.train --epochs 20 --device auto
+```
+
+The first run downloads torchvision's ImageNet initialization weights. Training selects a checkpoint using held-out known-identity top-1 accuracy, then estimates review/verified cutoffs from the 95th and 99.5th percentiles of each validation query's best impostor-identity score. It writes:
+
+```text
+models/best_model.pt
+models/calibration.json
+```
+
+The validation split contains the same identities as training, so these cutoffs do not measure false matches against genuinely unseen cattle. A quantile is not a safety guarantee. Full-frame embeddings can learn background or acquisition shortcuts. Model and calibration metrics are diagnostic prototype metrics, not production performance claims.
+
+If the machine has no compatible GPU, `--device cpu` works but may take a long time. For GPU use, install the matching build selected by PyTorch's official installer; `--device auto` uses CUDA when available.
+
+## Run locally
+
+After configuring `.env` and (optionally) training a model:
+
+```powershell
+python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000), then sign in with the operator password. `/docs` exposes the API schema; data endpoints still require the session cookie.
+
+Without trained weights, animal records can still be created and saved as `pending_model`, with images encrypted. After the model and matching calibration are installed, new registrations create encrypted reference embeddings and are labeled `prototype_ready`. Previously pending records are not silently re-embedded; an explicit migration/re-enrollment workflow is still needed. Model version changes also require re-enrollment because the gallery is versioned.
 
 ## Docker Compose
 
-Compose starts PostgreSQL and the API, which also serves the portal:
+Set the database password and all three security values in `.env`, train the model locally, then run:
 
 ```powershell
-# First set POSTGRES_PASSWORD to a private local value in .env.
 docker compose up --build
 ```
 
-Then open `http://localhost:8000`. The image installs the full `requirements.txt`, including the ML dependencies. Docker Compose was not verified in the current development environment because the Docker Desktop engine was unavailable. GPU container support is not configured.
+The API binds to localhost. Compose mounts `models/` read-only and stores encrypted uploads and PostgreSQL data in named volumes. For an HTTPS deployment, configure the reverse proxy and set `COOKIE_SECURE=true`. Docker runtime and GPU acceleration must be configured for the host; this repository does not configure GPU containers.
 
-## Dataset audit and handling
+## API
 
-The observed data layout is:
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/api/session` | Reports whether security settings exist and the browser session is authenticated |
+| `POST` | `/api/login` | Starts an eight-hour operator session |
+| `POST` | `/api/logout` | Clears the operator session |
+| `GET` | `/api/health` | Authenticated database/model/calibration status |
+| `GET` | `/api/animals?q=&offset=&limit=&sort=` | Authenticated searchable, paginated registry |
+| `GET` | `/api/animals/{id}` | Authenticated animal details and image metadata |
+| `POST` | `/api/animals` | Authenticated registration; requires `Idempotency-Key` and 1–8 `images` |
+| `POST` | `/api/verify` | Authenticated prototype match; persists a labeled prototype result |
+| `GET` | `/api/history` | Authenticated recent verification results |
+
+## Data and project layout
 
 ```text
-data/
-├── train/dataset/<cattle_identity>/*
-└── test/Cattle Muzzle - DB/{Original,Modified}/<numeric_identity>/*
+src/api/          FastAPI routes, sessions, rate limits, security headers
+src/database/     SQLAlchemy records and encrypted embedding table
+src/inference/    Image validation, artifact loading, embeddings, prototype search
+src/models/       ResNet-50 embedding model and triplet loss
+src/security/     AES-GCM record encryption
+src/training/     Train/validation split, training, checkpoint selection, calibration
+web/              Static operator portal
+tests/            API, security, image and decision tests
+data/             Local-only dataset; excluded from Git
+models/           Local-only trained weights and calibration; excluded from Git
 ```
 
-The test subsets also have flat `*Master` folders that mirror class images. The latest audit found 4,943 training images across 268 folders and 743 distinct images across 24 identities in each test subset; no unreadable image files were detected. Literal train/test folder labels do not overlap, but identity-level separation is **not confirmed** because the label schemes differ. Do not train, tune, select a model, or calibrate thresholds on test data.
+Animal reference images are stored under `storage/uploads` using generated names and encrypted bytes. Per-image embeddings are encrypted in the database and tagged with a model version. The prototype gallery is searched with cosine similarity; FAISS is not currently used.
 
-Run the read-only audit locally:
-
-```powershell
-python -m src.data.validation
-```
-
-This generates `reports/dataset_report.json` and `reports/dataset_report.md`. The JSON includes image-level paths, duplicate groups, and identity labels; it is intentionally excluded from Git to avoid publishing dataset-level details. Never add raw data or generated test samples to a public commit.
-
-## Model and evaluation status
-
-`src/models/embedding_model.py` defines a ResNet-50 encoder with a 512D linear head and L2-normalized output. It requests ImageNet pretrained weights. `src/models/losses.py` defines batch-hard triplet loss. The repository does **not** yet provide executable training, evaluation, threshold-calibration, checkpoint-selection, FAISS-index, or YOLO-inference pipelines. No accuracy, FAR, FRR, EER, or open-set metrics are available.
-
-Install the full ML dependencies from `requirements.txt` only when preparing an ML development environment. PyTorch must be compatible with the chosen operating system and CPU/GPU. There are no trained weights in this repository.
-
-## Data model and uploads
-
-SQLAlchemy stores:
-
-- `animals` — metadata and profile status.
-- `animal_images` — generated storage key, SHA-256 digest, and decoded dimensions.
-- `registration_requests` — idempotency keys for safe retries.
-- `verifications` — reserved for persisted decisions once inference exists.
-
-The local default is SQLite. Docker Compose configures PostgreSQL. Registration accepts up to eight images, each at most 12 MiB; images must decode and be at least 160 × 160 pixels. Files are named using generated UUIDs. These checks do not determine whether an image contains a cattle muzzle or whether its quality is sufficient for biometric matching.
-
-## Tests
-
-Run backend unit and API tests:
+## Checks
 
 ```powershell
 python -m pytest -q -p no:cacheprovider tests
+python -m compileall -q src tests
+node --check web\api.js
+node --check web\app.js
 ```
 
-The API tests cover registration persistence, idempotent retries, invalid/duplicate images, registry search, details, and the expected unavailable-verification response. There is no frontend test runner or production-build configuration; browser checks have been performed manually during development.
+## Next work before real identity use
 
-## Security and limitations
-
-- `.env`, local databases, uploads, datasets, model weights, and Python caches are excluded by `.gitignore`.
-- Upload sizes and image decoding are validated; user-supplied filenames are not used as storage paths.
-- The API currently has no authentication, authorization, organization isolation, rate limiting, retention controls, malware scanning, or database migration framework. Do not expose it to untrusted networks.
-- The API does not yet persist image embeddings or maintain a FAISS index. Database/index consistency, deletion behavior, and biometric recovery after restart are not implemented.
-- A saved animal record is not a verified biometric identity. Insurance and fraud workflows are not available.
-
-## Project layout
-
-```text
-src/
-├── api/            FastAPI routes and application
-├── config.py       Environment-backed settings
-├── data/           Dataset audit
-├── database/       SQLAlchemy records and session setup
-├── inference/      Basic image validation and decision utility
-└── models/         ResNet-50 embedding model and metric loss definitions
-web/                Static operator portal and shared API client
-tests/              Unit and API tests
-reports/            Dataset and system reports
-```
-
-## Roadmap
-
-1. Confirm dataset identity provenance and leakage boundaries.
-2. Implement reproducible training and validation-only threshold calibration.
-3. Add detector, preprocessing contract, embedding generation, persistent gallery, and index rebuilds.
-4. Complete real registration and verification flows with open-set evaluation.
-5. Add authentication, organization roles, migrations, and audit controls.
-6. Build insurance, alerts/review, analytics, reporting, and integration workflows after biometric validation.
+1. Obtain verified identity provenance and a valid identity-disjoint evaluation split.
+2. Acquire muzzle bounding-box annotations and train/validate a detector and preprocessing contract.
+3. Measure open-set FAR/FRR, confidence intervals, acquisition variation, and demographic/breed performance on untouched cattle identities.
+4. Add explicit re-enrollment, deletion, key rotation, retention, database migrations, roles and organization isolation.
+5. Threat-model and penetration-test the deployed service before using sensitive operational records.

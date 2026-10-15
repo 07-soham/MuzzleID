@@ -1,0 +1,5 @@
+# Install the API dependencies and a platform-compatible CPU/GPU PyTorch build.
+-r requirements-mvp.txt
+torch>=2.2
+torchvision>=0.17
+numpy>=1.26

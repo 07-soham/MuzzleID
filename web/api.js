@@ -7,10 +7,14 @@ window.MuzzleApi = (() => {
   };
   async function request(path, options = {}) {
     const response = await fetch(path, options);
+    if (response.status === 401 && path !== '/api/login') window.dispatchEvent(new Event('muzzleid:session-expired'));
     if (!response.ok) throw new Error(await errorMessage(response));
     return response.status === 204 ? null : response.json();
   }
   return {
+    session: () => request('/api/session'),
+    login: password => request('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }),
+    logout: () => request('/api/logout', { method: 'POST' }),
     /** @returns {Promise<{status:string,database_available:boolean,model_available:boolean,decision_thresholds:string}>} */
     health: () => request('/api/health'),
     /** @returns {Promise<{items:Array,total:number,offset:number,limit:number}>} */

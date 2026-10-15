@@ -24,8 +24,11 @@ def service(tmp_path, monkeypatch):
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     uploads = tmp_path / "uploads"
     monkeypatch.setattr(api, "SessionFactory", factory)
-    monkeypatch.setattr(api, "get_settings", lambda: {"database_url": f"sqlite:///{database}", "model_path": tmp_path / "missing-model.pt", "upload_dir": uploads, "max_upload_bytes": 12 * 1024 * 1024})
+    settings = {"database_url": f"sqlite:///{database}", "model_path": tmp_path / "missing-model.pt", "calibration_path": tmp_path / "missing-calibration.json", "upload_dir": uploads, "max_upload_bytes": 12 * 1024 * 1024, "operator_password": "test-operator-password-2026", "session_secret": "test-session-secret-value-long-enough-32-bytes", "data_key": "dGVzdC1rZXktbXV6emxlaWQtMzItYnl0ZXMta2V5ISE=", "cookie_secure": False}
+    monkeypatch.setattr(api, "get_settings", lambda: settings)
     with TestClient(api.app) as client:
+        login = client.post("/api/login", json={"password": settings["operator_password"]})
+        assert login.status_code == 200
         yield client, factory, uploads, database
     engine.dispose()
 
@@ -40,7 +43,9 @@ def test_registration_persists_reference_images_and_replay_is_idempotent(service
     assert result["persisted"] is True
     assert result["status"] == "pending_model"
     assert result["image_count"] == 2
-    assert len(list(uploads.iterdir())) == 2
+    stored = list(uploads.iterdir())
+    assert len(stored) == 2
+    assert all(path.suffix == ".enc" and path.read_bytes().startswith(b"MZ01") for path in stored)
     replay = client.post("/api/animals", headers=headers, data={"name": "Should not duplicate"}, files=[("images", ("ignored.jpg", jpeg(color=(20, 50, 200)), "image/jpeg"))])
     assert replay.status_code == 200
     assert replay.json()["id"] == result["id"]
@@ -78,4 +83,23 @@ def test_registry_search_details_and_unavailable_verification(service):
     assert invalid.status_code == 422
     unavailable = client.post("/api/verify", files={"image": ("query.jpg", jpeg(), "image/jpeg")})
     assert unavailable.status_code == 503
-    assert "trained model weights" in unavailable.json()["detail"]
+    assert "trained model" in unavailable.json()["detail"]
+
+
+def test_private_api_requires_operator_session(monkeypatch, tmp_path):
+    database = tmp_path / "private.sqlite"
+    engine = create_engine(f"sqlite:///{database}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(api, "SessionFactory", sessionmaker(bind=engine, expire_on_commit=False))
+    settings = {"database_url": f"sqlite:///{database}", "model_path": tmp_path / "missing.pt", "calibration_path": tmp_path / "missing.json", "upload_dir": tmp_path / "uploads", "max_upload_bytes": 12 * 1024 * 1024, "operator_password": "test-operator-password-2026", "session_secret": "test-session-secret-value-long-enough-32-bytes", "data_key": "dGVzdC1rZXktbXV6emxlaWQtMzItYnl0ZXMta2V5ISE=", "cookie_secure": False}
+    monkeypatch.setattr(api, "get_settings", lambda: settings)
+    try:
+        with TestClient(api.app) as client:
+            assert client.get("/api/animals").status_code == 401
+            assert "Content-Security-Policy" in client.get("/").headers
+            assert client.post("/api/login", json={"password": settings["operator_password"]}).status_code == 200
+            assert client.get("/api/animals").status_code == 200
+            assert client.post("/api/logout").status_code == 200
+            assert client.get("/api/animals").status_code == 401
+    finally:
+        engine.dispose()
