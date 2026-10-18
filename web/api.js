@@ -19,10 +19,22 @@ window.MuzzleApi = (() => {
     health: () => request('/api/health'),
     /** @returns {Promise<{items:Array,total:number,offset:number,limit:number}>} */
     animals: ({ q = '', offset = 0, limit = 25, sort = 'created_at' } = {}) => request(`/api/animals?${new URLSearchParams({ q, offset, limit, sort })}`),
+    animalOptions: () => request('/api/animal-options'),
     animal: id => request(`/api/animals/${encodeURIComponent(id)}`),
+    updateAnimal: (id, fields) => request(`/api/animals/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields) }),
+    reindexAnimal: id => request(`/api/animals/${encodeURIComponent(id)}/reindex`, { method: 'POST' }),
+    deleteAnimal: id => request(`/api/animals/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     /** @param {FormData} form @param {string} idempotencyKey */
     register: (form, idempotencyKey) => request('/api/animals', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: form }),
     verify: form => request('/api/verify', { method: 'POST', body: form }),
     history: () => request('/api/history'),
+    policies: () => request('/api/insurance/policies'),
+    createPolicy: payload => request('/api/insurance/policies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+    updatePolicy: (id, fields) => request(`/api/insurance/policies/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields) }),
+    deletePolicy: id => request(`/api/insurance/policies/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    alerts: status => request(`/api/alerts?status=${encodeURIComponent(status)}`),
+    updateAlert: (id, status) => request(`/api/alerts/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }),
+    analytics: () => request('/api/analytics'),
+    settings: () => request('/api/settings'),
   };
 })();

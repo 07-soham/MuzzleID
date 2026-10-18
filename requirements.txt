@@ -1,23 +1,2 @@
-# Python 3.10 or 3.11 recommended. Install a platform-compatible PyTorch build first.
-torch>=2.2
-torchvision>=0.17
-numpy>=1.26
-pandas>=2.1
-scikit-learn>=1.4
-Pillow>=10.2
-opencv-python-headless>=4.9
-albumentations>=1.4
-tqdm>=4.66
-matplotlib>=3.8
-seaborn>=0.13
-faiss-cpu>=1.8
-fastapi>=0.110
-uvicorn[standard]>=0.27
-python-multipart>=0.0.9
-pydantic>=2.6
-SQLAlchemy>=2.0
-psycopg[binary]>=3.1
-python-dotenv>=1.0
-pytest>=8.0
-tensorboard>=2.16
-cryptography>=42.0
+# Complete Python runtime: API, trained embeddings, and FAISS gallery search.
+-r requirements-ml.txt

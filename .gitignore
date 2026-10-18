@@ -1,5 +1,6 @@
 .env
 .venv/
+p/
 .torch-cache/
 venv/
 __pycache__/
@@ -13,11 +14,7 @@ pytest-cache-files-*/
 node_modules/
 .next/
 data/
-models/*.pt
-models/*.pth
-models/*.onnx
-models/*.faiss
-models/*.index
+models/
 storage/
 reports/dataset_report.json
 *.db

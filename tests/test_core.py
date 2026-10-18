@@ -17,6 +17,8 @@ def test_quality_accepts_readable_image():
     result = inspect_image(image_bytes())
     assert result["valid"] is True
     assert result["width"] == 256
+    assert 0 <= result["quality"]["brightness_mean"] <= 1
+    assert "possible_blur" in result["quality"]["warnings"]
 
 
 def test_quality_rejects_small_and_corrupt_images():
@@ -28,5 +30,8 @@ def test_decision_requires_explicit_valid_thresholds():
     assert decide(.91, verified_threshold=.9, review_threshold=.75) == "VERIFIED"
     assert decide(.8, verified_threshold=.9, review_threshold=.75) == "REVIEW"
     assert decide(.5, verified_threshold=.9, review_threshold=.75) == "UNKNOWN"
+    assert decide(-.2, verified_threshold=.1, review_threshold=-.3) == "REVIEW"
     with pytest.raises(ValueError):
         decide(.8, verified_threshold=.7, review_threshold=.75)
+    with pytest.raises(ValueError):
+        decide(float("nan"), verified_threshold=.9, review_threshold=.75)

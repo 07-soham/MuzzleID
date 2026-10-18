@@ -1,56 +1,32 @@
 # MuzzleID
 
-**A secured prototype for cattle records and muzzle-image identity research.**
+MuzzleID is a secured single-operator prototype for cattle records and muzzle-image identity research. It includes a FastAPI portal, encrypted reference-image storage, metric-learning training, versioned image embeddings, an encrypted FAISS gallery cache, policy metadata, review alerts, analytics, and CSV exports.
 
-MuzzleID combines a FastAPI service, an operator portal, encrypted image and embedding storage, and a reproducible ResNet-50 metric-learning training workflow. The model is intended for research and demonstration only.
+> [!CAUTION]
+> This repository is **not launch-ready for biometric decisions**. Its embedding model operates on full images because the supplied data has no verified muzzle bounding-box annotations or trained muzzle detector. Dataset identity provenance and population representativeness are unverified. Prototype outcomes are not proof of ownership and must not determine insurance, fraud, veterinary, or other consequential outcomes. Always require independent human confirmation.
 
-> [!WARNING]
-> Prototype identity suggestions are not reliable evidence of ownership. The current pipeline embeds the full image, has no muzzle detector or crop, and has not been validated on identities known to be absent from training. Do not use it for insurance, fraud, veterinary, ownership, or other consequential decisions. Require human confirmation.
+## Current functionality
 
-## Current capabilities
-
-| Area | Status |
+| Capability | State |
 |---|---|
-| Operator portal, registry search, registration, details, system status | Available after operator sign-in |
-| Registration and gallery reference images | AES-GCM encrypted at rest; max 8 images × 12 MiB |
-| Operator sessions | HttpOnly, SameSite=Strict signed cookie; configured password and session secret required |
-| Upload checks | Format allowlist, decoding, dimensions, animation rejection, request/image limits |
-| Model training | Reproducible train/validation split over `data/train/dataset`; exact byte duplicates are kept on one side |
-| Embedding network | ImageNet-initialized ResNet-50 with a 512-dimensional normalized embedding head |
-| Training objective | Batch-hard triplet loss with identity-balanced batches |
-| Validation | Checkpoint selection by known-identity top-1; thresholds estimated from validation impostor-score quantiles |
-| Gallery and verification | Encrypted database embeddings and cosine prototype search; results clearly labeled prototype-only |
-| Muzzle detection, crop, open-set evaluation, external test evaluation | Not available; labels/provenance needed to implement and assess these safely |
-| Multi-user roles, organization isolation, migrations, retention controls | Not available |
+| Sign-in, animal registry, create/edit/delete, authenticated image previews | Available |
+| Encrypted uploaded images and embedding vectors | AES-GCM, with per-record associated data |
+| Technical image checks | Format, decoded size, animation, dimensions, corruption, plus non-decision capture-quality flags |
+| ResNet-50 embedding training and inference | Available after local training artifacts are installed |
+| Validation and test split | Animal-identity-disjoint train, checkpoint selection, calibration, and test partitions |
+| FAISS vector search | Per-animal prototype index, encrypted persistence, model/version/content validation, rebuild from database records |
+| VERIFIED / REVIEW / UNKNOWN | Calibrated cosine thresholds; prototype only, not a production biometric guarantee |
+| Policy register | Operator-entered policy metadata only; no insurer integration or claims/eligibility decision |
+| Alerts | Duplicate ear tags and REVIEW verification events; operator resolution workflow |
+| Analytics and reports | Saved-record aggregates and formula-safe CSV exports |
+| YOLO muzzle detection, validated crop pipeline, population-level biometric release evidence | **Not available**; verified muzzle annotations, data provenance, and independent evaluation are required |
+| Multi-user roles, organization isolation, MFA, key-management service | Not available; restrict this prototype to one trusted operator |
 
-No model weights or calibration file are included in Git. They are generated locally by training and ignored by `.gitignore`.
+Model files and raw datasets are local-only and excluded from Git. A clone therefore needs to run training before biometric inference is available.
 
-## Security setup
+## Install
 
-The service refuses to issue an authenticated session without an operator password and a 32-byte session secret. It also refuses image registration and gallery inference unless a valid 32-byte encryption key is configured. Generate three independent values:
-
-```powershell
-python -c "import secrets; print(secrets.token_urlsafe(24))" # operator password
-python -c "import secrets; print(secrets.token_urlsafe(32))" # session secret
-python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())" # data key
-```
-
-Copy `.env.example` to `.env`, then set `MUZZLEID_OPERATOR_PASSWORD`, `MUZZLEID_SESSION_SECRET`, and `MUZZLEID_DATA_KEY` to the generated values. Keep `.env` private and out of Git. Losing or rotating the data key without re-encrypting records makes stored images and vectors unreadable. Back it up securely.
-
-Uploads and embedding vectors are encrypted with AES-GCM, with per-record associated data. The database stores image hashes and encrypted vectors. Login, registration, and verification have per-process rate limits. The browser session cookie is `HttpOnly` and `SameSite=Strict`; enable `COOKIE_SECURE=true` behind HTTPS. Compose publishes only on `127.0.0.1` by default. Do not expose the development server directly to the public internet.
-
-For an existing local install with unencrypted uploads, back up the database and upload directory, then preview and apply the migration after setting the data key:
-
-```powershell
-python -m src.security.migrate_storage
-python -m src.security.migrate_storage --apply
-```
-
-This is a single-operator prototype, not a hardened multi-tenant service. Rate limits are process-local, there is no MFA/role system, audit retention policy, key-management service, malware scanner, or database migration framework. Restrict host access, keep backups encrypted, and put a properly configured HTTPS reverse proxy and firewall in front of any shared deployment.
-
-## Install and train
-
-Use a virtual environment. The training script requires a platform-compatible PyTorch and torchvision build; follow the official [PyTorch installation selector](https://pytorch.org/get-started/locally/) for CPU or the correct GPU/CUDA version.
+Use Python 3.10–3.14 and a virtual environment. Install PyTorch using the official [PyTorch installation selector](https://pytorch.org/get-started/locally/) for the machine’s operating system and CPU/GPU. Then install the app and model dependencies:
 
 ```powershell
 python -m venv .venv
@@ -59,89 +35,91 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements-ml.txt
 ```
 
-`data/train/dataset/<identity>/*` is the only dataset read by training. The separate `data/test` tree is deliberately not used: its numeric identities have not been mapped to the training labels, so identity-level leakage cannot be ruled out. The script deduplicates exact file bytes before splitting each training identity into train and validation images.
+For the tests, also install `requirements-dev.txt`.
+
+## Configure secrets
+
+Copy `.env.example` to `.env` and create three independent random values:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(24))" # operator password
+python -c "import secrets; print(secrets.token_urlsafe(32))" # session signing secret
+python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())" # AES-GCM key
+```
+
+Set `MUZZLEID_OPERATOR_PASSWORD`, `MUZZLEID_SESSION_SECRET`, and `MUZZLEID_DATA_KEY`. The password must have at least 12 characters; the session secret must have at least 32; the data key must encode exactly 32 random bytes. Keep `.env` private and out of Git. Back up the data key securely: losing it makes encrypted images, embeddings, and the saved gallery cache unreadable. Rotate it only with a tested re-encryption procedure.
+
+`COOKIE_SECURE=true` is required behind HTTPS. The default SQLite database is suitable only for local single-operator use. Metadata and audit fields are not application-encrypted; use host disk encryption and encrypted backups.
+
+## Train and evaluate
+
+Training reads only `data/train/dataset/<identity>/*`. It ignores byte-identical duplicates and assigns whole identity folders to 70% training, 10% checkpoint selection, 10% calibration, and 10% final testing. The latter partitions include enrolled identities and distinct unknown identities. Dataset folders are treated as labels; the provenance and real-world uniqueness of those labels are not independently verified.
+
+The model is ImageNet-initialized ResNet-50 with a normalized 512-dimensional head, batch-hard triplet loss, and fine-tuning of the final ResNet block and embedding head. Training defaults to 20 bounded epochs with 128-pixel inputs to support CPU-only hosts. Adjust `--batches-per-epoch`, `--batch-identities`, or `--image-size` only as an explicit resource/experiment choice; record the settings alongside metrics.
 
 ```powershell
 python -m src.training.train --epochs 20 --device auto
 ```
 
-The first run downloads torchvision's ImageNet initialization weights. Training selects a checkpoint using held-out known-identity top-1 accuracy, then estimates review/verified cutoffs from the 95th and 99.5th percentiles of each validation query's best impostor-identity score. It writes:
+The first run needs the ImageNet initialization weights. The trainer writes `models/best_model.pt` and `models/calibration.json`; it reports identity-disjoint test top-1, known false-reject, and unknown false-accept rates. Unknown-query maximum cosine scores in the separate calibration identities set REVIEW and VERIFIED thresholds. These estimates are limited by the dataset and number of independent cattle identities. Do not tune thresholds against the final test partition.
 
-```text
-models/best_model.pt
-models/calibration.json
-```
-
-The validation split contains the same identities as training, so these cutoffs do not measure false matches against genuinely unseen cattle. A quantile is not a safety guarantee. Full-frame embeddings can learn background or acquisition shortcuts. Model and calibration metrics are diagnostic prototype metrics, not production performance claims.
-
-If the machine has no compatible GPU, `--device cpu` works but may take a long time. For GPU use, install the matching build selected by PyTorch's official installer; `--device auto` uses CUDA when available.
+The separate `data/test` directories are not included in training or the reported training-tree test metrics because their identity mapping and provenance relative to training are unknown. No muzzle-box annotations were found; a YOLO muzzle detector cannot be truthfully trained from the current images alone. The latest local run's metrics and limits are recorded in [the implementation report](reports/final_system_report.md); its unknown-query false-accept result fails the safety gate, so this model must remain a research prototype.
 
 ## Run locally
 
-After configuring `.env` and (optionally) training a model:
+After installing dependencies, configuring `.env`, and (for matching) completing a successful training run:
 
 ```powershell
 python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000), then sign in with the operator password. `/docs` exposes the API schema; data endpoints still require the session cookie.
-
-Without trained weights, animal records can still be created and saved as `pending_model`, with images encrypted. After the model and matching calibration are installed, new registrations create encrypted reference embeddings and are labeled `prototype_ready`. Previously pending records are not silently re-embedded; an explicit migration/re-enrollment workflow is still needed. Model version changes also require re-enrollment because the gallery is versioned.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) and sign in. Animal records can be stored without model artifacts and will show `pending_model`; verification remains unavailable until the checkpoint, matching calibration, and FAISS are present. When artifacts are added or replaced, open an animal profile and choose **Rebuild biometric profile** to generate versioned embeddings from its integrity-checked encrypted reference images. The system retains earlier model versions until the record is deleted.
 
 ## Docker Compose
 
-Set the database password and all three security values in `.env`, train the model locally, then run:
+Set `POSTGRES_PASSWORD` and the three MuzzleID secrets in `.env`, train the model locally, and run:
 
 ```powershell
 docker compose up --build
 ```
 
-The API binds to localhost. Compose mounts `models/` read-only and stores encrypted uploads and PostgreSQL data in named volumes. For an HTTPS deployment, configure the reverse proxy and set `COOKIE_SECURE=true`. Docker runtime and GPU acceleration must be configured for the host; this repository does not configure GPU containers.
+Compose uses PostgreSQL, the CPU PyTorch runtime, a non-root API user, a read-only container root filesystem, dropped Linux capabilities, and a localhost-only published port. Model artifacts are mounted read-only; encrypted uploads and gallery cache use separate named volumes. Configure a TLS reverse proxy and set `COOKIE_SECURE=true` before exposing the service to a network. Do not expose Uvicorn directly to the public internet.
 
-## API
+## Data integrity and recovery
 
-| Method | Route | Purpose |
+Alembic migrations preserve the earlier MVP schema and add current columns. On startup the service detects missing referenced upload files, disables those animal profiles, removes their now-unusable embeddings, and logs the count. Stale temporary uploads and old unreferenced encrypted files are cleaned after a grace period.
+
+The relational database is the source of truth for gallery embeddings. FAISS prototypes are rebuilt from authenticated/decrypted model-versioned records whenever the stored index fingerprint is stale, corrupt, or missing. The serialized index and identity mapping are AES-GCM encrypted and atomically replaced. A database or data-key backup must accompany any deployment recovery plan.
+
+## API overview
+
+Every data route requires the operator session.
+
+| Method | Route | Function |
 |---|---|---|
-| `GET` | `/api/session` | Reports whether security settings exist and the browser session is authenticated |
-| `POST` | `/api/login` | Starts an eight-hour operator session |
-| `POST` | `/api/logout` | Clears the operator session |
-| `GET` | `/api/health` | Authenticated database/model/calibration status |
-| `GET` | `/api/animals?q=&offset=&limit=&sort=` | Authenticated searchable, paginated registry |
-| `GET` | `/api/animals/{id}` | Authenticated animal details and image metadata |
-| `POST` | `/api/animals` | Authenticated registration; requires `Idempotency-Key` and 1–8 `images` |
-| `POST` | `/api/verify` | Authenticated prototype match; persists a labeled prototype result |
-| `GET` | `/api/history` | Authenticated recent verification results |
+| `GET` | `/api/session` | Session/configuration state |
+| `POST` | `/api/login`, `/api/logout` | Operator session management |
+| `GET` | `/api/health`, `/api/settings` | Database, model, detector, FAISS and security configuration state |
+| `GET`, `POST` | `/api/animals` | Search/paginate registry and register encrypted references |
+| `GET`, `PATCH`, `DELETE` | `/api/animals/{id}` | Read, edit, or remove a record |
+| `POST` | `/api/animals/{id}/reindex` | Rebuild current-model embeddings from verified stored images |
+| `GET` | `/api/animals/{id}/images/{image_id}` | Authenticated decrypted reference preview, no-store |
+| `POST` | `/api/verify` | Prototype-only identity result and persisted history |
+| `GET` | `/api/history`, `/api/alerts`, `/api/analytics` | Audit and operational views |
+| `GET`, `POST`, `PATCH`, `DELETE` | `/api/insurance/policies` | Operator-maintained policy metadata |
+| `GET` | `/api/reports/animals.csv`, `/api/reports/verifications.csv` | Spreadsheet-safe exports |
 
-## Data and project layout
+`/docs` provides the API schema. Do not enable it on a public deployment without an access-controlled operations policy.
 
-```text
-src/api/          FastAPI routes, sessions, rate limits, security headers
-src/database/     SQLAlchemy records and encrypted embedding table
-src/inference/    Image validation, artifact loading, embeddings, prototype search
-src/models/       ResNet-50 embedding model and triplet loss
-src/security/     AES-GCM record encryption
-src/training/     Train/validation split, training, checkpoint selection, calibration
-web/              Static operator portal
-tests/            API, security, image and decision tests
-data/             Local-only dataset; excluded from Git
-models/           Local-only trained weights and calibration; excluded from Git
-```
-
-Animal reference images are stored under `storage/uploads` using generated names and encrypted bytes. Per-image embeddings are encrypted in the database and tagged with a model version. The prototype gallery is searched with cosine similarity; FAISS is not currently used.
-
-## Checks
+## Verification
 
 ```powershell
 python -m pytest -q -p no:cacheprovider tests
-python -m compileall -q src tests
+python -m compileall -q src tests migrations
 node --check web\api.js
 node --check web\app.js
+docker compose config -q
+python -m scripts.release_e2e
 ```
 
-## Next work before real identity use
-
-1. Obtain verified identity provenance and a valid identity-disjoint evaluation split.
-2. Acquire muzzle bounding-box annotations and train/validate a detector and preprocessing contract.
-3. Measure open-set FAR/FRR, confidence intervals, acquisition variation, and demographic/breed performance on untouched cattle identities.
-4. Add explicit re-enrollment, deletion, key rotation, retention, database migrations, roles and organization isolation.
-5. Threat-model and penetration-test the deployed service before using sensitive operational records.
+Before any real-world identity use, obtain verified identity provenance, collect and review muzzle-box annotations, train and validate a detector/crop contract, evaluate false-accept and false-reject rates on an untouched representative population, implement safe key rotation/re-enrollment/deletion controls, and conduct independent security and deployment testing.

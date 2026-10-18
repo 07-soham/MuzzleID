@@ -1,5 +1,6 @@
-# Install the API dependencies and a platform-compatible CPU/GPU PyTorch build.
+# Install the API, embedding, and vector-search dependencies. Choose the correct
+# CPU/GPU PyTorch wheel for this machine using pytorch.org/get-started/locally.
 -r requirements-mvp.txt
 torch>=2.2
 torchvision>=0.17
-numpy>=1.26
+faiss-cpu>=1.8

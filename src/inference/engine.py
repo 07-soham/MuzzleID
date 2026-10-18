@@ -13,6 +13,7 @@ from PIL import Image, ImageOps
 
 from src.config import get_settings
 from src.security.crypto import data_key_bytes
+from src.inference.decision import decide
 
 
 def _load_torch():
@@ -68,6 +69,19 @@ def model_state():
         return {"available": False, "reason": str(exc)}
 
 
+def faiss_available() -> bool:
+    from src.inference.faiss_gallery import faiss_available as check_faiss
+    return check_faiss()
+
+
+def faiss_available() -> bool:
+    try:
+        import faiss  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def embed_images(raw_images: list[bytes]):
     loaded = artifacts()
     if loaded is None:
@@ -86,28 +100,22 @@ def embed_images(raw_images: list[bytes]):
     return [vector.tolist() for vector in vectors], version, calibration
 
 
-def match_embedding(vector: list[float], gallery: list[tuple[str, str]]):
-    """Return best animal, cosine score, decision; gallery is (animal_id, JSON vector)."""
+def match_embedding(vector: list[float], gallery: list[tuple[str, str]], *, index_path=None, key=None):
+    """Match per-animal prototypes with an encrypted, DB-recoverable FAISS index."""
     loaded = artifacts()
     if loaded is None:
         raise RuntimeError("A trained checkpoint and matching calibration file are required.")
-    _, calibration, _, _ = loaded
-    query = np.asarray(vector, dtype=np.float32)
-    query /= max(float(np.linalg.norm(query)), 1e-12)
-    prototypes: dict[str, list[np.ndarray]] = {}
-    for animal_id, encoded in gallery:
-        candidate = np.asarray(json.loads(encoded), dtype=np.float32)
-        if candidate.shape != query.shape or not np.isfinite(candidate).all():
-            continue
-        candidate /= max(float(np.linalg.norm(candidate)), 1e-12)
-        prototypes.setdefault(animal_id, []).append(candidate)
-    if not prototypes:
+    _, calibration, version, _ = loaded
+    from src.inference.faiss_gallery import match_gallery
+    settings = get_settings()
+    if index_path is None:
+        index_path = settings["index_path"]
+    if key is None:
+        key = data_key_bytes(settings.get("data_key", ""))
+    animal_id, score = match_gallery(vector, gallery, index_path=index_path, encryption_key=key, model_version=version)
+    if animal_id is None:
         return None, None, "UNKNOWN"
-    centers = {key: np.mean(values, axis=0) for key, values in prototypes.items()}
-    centers = {key: value / max(float(np.linalg.norm(value)), 1e-12) for key, value in centers.items()}
-    ranked = sorted(((float(query @ center), animal_id) for animal_id, center in centers.items()), reverse=True)
-    score, animal_id = ranked[0]
     verified = float(calibration["verified_threshold"])
     review = float(calibration["review_threshold"])
-    decision = "VERIFIED" if score >= verified else "REVIEW" if score >= review else "UNKNOWN"
+    decision = decide(score, verified_threshold=verified, review_threshold=review)
     return animal_id, score, decision

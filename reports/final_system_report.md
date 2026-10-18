@@ -1,54 +1,59 @@
-# MuzzleID prototype implementation report
+# MuzzleID release verification report
 
-## Product status
+## Release status
 
-MuzzleID now has a secured operator portal and API, AES-GCM storage for reference images and embeddings, a ResNet-50 metric-learning training command, validation-based checkpoint selection, threshold calibration, model-versioned gallery records, and prototype-only verification.
+**Not launch-ready for biometric identity decisions.** Core prototype workflows, software tests, model loading, calibration, and FAISS recovery passed local checks, but the held-out unknown-animal false-accept rate was 13.68% (16 of 117 queries). The model uses full images because the dataset has no verified muzzle boxes or detector labels. Label provenance and population representativeness are also unverified. Do not rely on prototype results for ownership, insurance, fraud, veterinary, or other consequential decisions.
 
-The system is still a research prototype. It embeds the whole image; there is no trained muzzle detector or crop. Calibration uses a held-out image split from the same training identities. The separate test folders remain unused because their numeric label IDs have no verified mapping to the training labels. No claim about unseen-cattle false-accept performance or production identity accuracy is supported.
+## Implemented
 
-## Dataset
+- Added Alembic schema history, including a migration from one embedding per image to model-versioned embeddings while preserving old vectors.
+- Added encrypted, fingerprinted FAISS persistence with identity mapping, atomic replacement, and automatic recovery from missing, stale, corrupt, or key/version-mismatched caches.
+- Added per-animal reindexing from encrypted, SHA-256-verified reference images. Registry, details, analytics, and CSV report profile states now reflect embeddings for the current model version.
+- Added image format, readability, bounds, animation, and non-decision capture-quality checks; stored quality metadata for review.
+- Trained and evaluated an ImageNet-initialized ResNet-50 with a 512D normalized embedding head and identity-disjoint partitions. Kept the separate `data/test` tree out of training because its identity mapping is not verified.
+- Updated Docker configuration with PostgreSQL, model dependencies, non-root/read-only runtime settings, local-only port binding, secret-safe database URL construction, and persistent data volumes.
+- Updated README with setup, model limitations, reindex workflow, API routes, recovery guidance, and verification commands.
 
-The local training partition has 4,943 JPEG files under 268 cattle identity folders. The prior read-only audit found 20 exact duplicate groups. The training script removes byte-identical images before making per-identity train/validation splits. The test directories and their mirrored master folders are not read by training or calibration.
+## Model run and held-out metrics
 
-Raw data and image-level audit JSON are excluded from Git. Aggregate-only dataset notes may be committed.
+Run: CPU, 10 epochs, 128-pixel inputs, 8 identities × 4 images per batch, 16 batches per epoch, seed 2026. Partitions: 187 training identities, 27 validation identities, then calibration and test partitions each split into 14 enrolled and 13 unknown identities. There were 3,497 training images. Calibration used 109 unknown queries. The final test used 126 known queries and 117 unknown queries.
 
-## Model workflow
+| Metric | Result |
+|---|---:|
+| Validation known-identity top-1 | 100.00% |
+| Test known-identity top-1 | 100.00% |
+| Test known queries verified correctly | 99.21% (125/126) |
+| Test known false reject | 0.79% (1/126) |
+| Test unknown false accept | **13.68% (16/117)** |
+| Test unknown routed to review | 8.55% (10/117) |
+| Test unknown rejected | 77.78% (91/117) |
+| Review / verified cosine thresholds | 0.50152 / 0.55271 |
 
-- Architecture: ImageNet-initialized ResNet-50, 512D L2-normalized embeddings.
-- Objective: batch-hard triplet loss with identity-balanced batches.
-- Checkpoint selection: highest held-out known-identity top-1; training loss breaks ties.
-- Decision cutoffs: validation impostor-score 95th/99.5th percentiles for review/verified.
-- Gallery: encrypted per-reference embeddings in the database; cosine similarity over per-animal mean prototypes.
-- Test data: not used.
-- Detector: unavailable because no muzzle bounding-box annotations are present.
-- Thresholds: not a guarantee; same-identity image holdout is not an open-set benchmark.
+These are small-sample, folder-identity-disjoint metrics on the current training tree, not independent real-world performance evidence. The 13.68% unknown false-accept rate fails the release gate. The checkpoint and calibration remain local, ignored artifacts and are not distributed in Git.
 
-The initial full training run is being executed locally on CPU because this environment has no CUDA device. Final run metrics are recorded here only after the process completes. Model weights and calibration remain local and ignored by Git.
+## Verification performed
 
-## Security and data handling
-
-- Operator password and session key are stored in local ignored `.env`; signed eight-hour HttpOnly/SameSite=Strict cookie sessions protect all data routes.
-- Browser/API data routes reject unauthenticated calls. Login, registration and verification are rate-limited per process.
-- Request body limits apply while streaming; supported images are JPEG, PNG or WebP, single-frame, decoded and bounded to 40 million pixels.
-- Reference images and stored embeddings are AES-GCM encrypted with per-record associated data. The data key is local and must be backed up securely; losing it makes those records unreadable.
-- The 12 existing local image files were encrypted in place and verified against their stored SHA-256 digests. No image content was logged or added to Git.
-- Local Docker port mapping binds only to `127.0.0.1`; `COOKIE_SECURE=true` is required behind HTTPS.
-- Animal metadata and image digests in SQLite/PostgreSQL are not application-encrypted. Use host disk encryption and encrypted backups.
-
-This prototype has no MFA, multi-user roles, organization isolation, key-management service, malware scanner, retention/deletion workflow, or database migration framework. Rate limiting is process-local. Do not expose the development service to the public internet.
-
-## Verification
-
-| Check | Result |
+| Command or check | Result |
 |---|---|
-| Backend/API/security suite | 7 passed on 2026-10-15 |
-| Python `compileall` | Passed |
-| JavaScript `node --check` for portal and API client | Passed |
-| Encrypted upload integrity | 12 records decrypted in memory and matched recorded SHA-256 digests |
-| Docker Compose | Not run; Docker Engine was unavailable during the previous local verification |
-| CUDA | Not available; training uses CPU |
-| Open-set evaluation / detector / ownership accuracy | Not available; not supported by current labels or annotations |
+| `python -m pytest -q -p no:cacheprovider --tb=short tests` | 12 passed |
+| `python -m scripts.release_e2e` | Passed: actual checkpoint registration, reindex, known match, unknown rejection in selected case, invalid-image HTTP 422, encrypted image retrieval, record/history restart persistence, FAISS recovery, corrupt-cache rebuild |
+| `python -m compileall -q src migrations scripts tests` | Passed |
+| `node --check web\api.js` and `node --check web\app.js` | Passed |
+| `python -m alembic current` | `0004_versioned_embeddings (head)` |
+| `docker compose config -q` | Passed |
+| Live loopback smoke check | Homepage 200, app JS 200, configured session, unauthenticated health 401; listener stopped afterward |
+| `docker info` / Docker deployment run | **Blocked:** Docker Desktop Linux Engine named pipe is unavailable in this environment |
+| Real YOLO detector validation | **Blocked:** no verified muzzle bounding-box annotations/model artifacts |
+| Frontend browser automation | Not run; app/API asset and client syntax checks were run, plus API end-to-end workflows |
 
-## Run locally
+The E2E restart check creates a fresh FastAPI lifespan and clears the in-process FAISS cache while reusing a temporary persistent SQLite database and index. It does not simulate a host power loss or an independent OS-process restart.
 
-See [README.md](../README.md) for secret setup, model training, the local server and Compose instructions. Training writes `models/best_model.pt` and `models/calibration.json`; neither file is committed.
+## Remaining launch blockers
+
+1. Obtain verified identity provenance and representative cattle data; evaluate on an independently collected population with a pre-registered false-accept target and confidence bounds.
+2. Collect expert-reviewed muzzle boxes, train and validate a detector, and test crop quality and downstream biometric performance.
+3. Reduce the unknown false-accept rate and independently review calibration before any biometric release.
+4. Start Docker Engine and exercise actual PostgreSQL Compose deployment, database backup/restore, and host/process restart recovery.
+5. Complete a browser-based UI smoke test and independent production security review. Current deployment is single-operator and does not include MFA, multi-tenant authorization, KMS/key rotation, or externally managed rate limits.
+
+Until those gates pass, keep the application restricted to local prototype/research use with human confirmation.
