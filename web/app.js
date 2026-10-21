@@ -16,13 +16,13 @@ async function refreshHealth() {
       ? 'The API could not confirm its database connection. Registry and registration actions may fail until the database is available.'
       : health.verification_available
       ? 'Prototype full-image embeddings are enabled. No muzzle detector or unseen-animal validation is available; every match requires human confirmation.'
-      : 'Animal records and image uploads are available. Matching requires a trained checkpoint and its matching validation calibration.';
+      : `Biometric matching is unavailable: ${health.biometric_engine_reason || 'engine startup checks have not completed.'}`;
     $('#status-tag').textContent = !health.database_available ? 'DATABASE ISSUE' : health.verification_available ? 'PROTOTYPE' : 'SETUP REQUIRED';
     const lock = document.querySelector('#verify-form .locked');
     if (lock) {
       lock.hidden = health.verification_available;
       lock.querySelector('strong').textContent = health.verification_available ? 'Prototype mode only' : 'Verification currently unavailable';
-      lock.querySelector('small').textContent = health.verification_available ? 'No muzzle detector; matches are prototype suggestions and require in-person confirmation.' : !health.model_available ? 'Training and matching calibration artifacts are not installed.' : 'FAISS gallery indexing is unavailable.';
+      lock.querySelector('small').textContent = health.verification_available ? 'No muzzle detector; matches are prototype suggestions and require in-person confirmation.' : health.biometric_engine_reason || (!health.model_available ? 'Training and matching calibration artifacts are not installed.' : 'FAISS gallery indexing is unavailable.');
     }
   } catch (error) {
     $('#system-status').textContent = 'Offline';

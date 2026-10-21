@@ -21,27 +21,19 @@ def faiss_available() -> bool:
         return False
 
 
-def match_gallery(query, gallery, *, index_path: Path, encryption_key: bytes, model_version: str):
-    """Return (animal id, cosine score) for gallery rows (animal id, JSON vector)."""
+def ensure_gallery_index(gallery, *, index_path: Path, encryption_key: bytes, model_version: str):
+    """Load or build the durable FAISS index from (animal id, JSON vector) rows."""
     global _CACHE
     if not gallery:
-        return None, None
+        return None, []
     try:
         import faiss
     except ImportError as exc:
         raise RuntimeError("Install faiss-cpu to use the biometric gallery.") from exc
-    query_vector = np.asarray(query, dtype=np.float32)
-    if query_vector.ndim != 1 or query_vector.size != 512 or not np.isfinite(query_vector).all():
-        raise ValueError("Query embedding has an invalid shape or value.")
-    query_norm = float(np.linalg.norm(query_vector))
-    if query_norm <= 1e-12:
-        raise ValueError("Query embedding has zero magnitude.")
-    query_vector /= query_norm
-
     image_vectors: dict[str, list[np.ndarray]] = {}
     for animal_id, encoded in gallery:
         vector = np.asarray(json.loads(encoded), dtype=np.float32)
-        if vector.shape != query_vector.shape or not np.isfinite(vector).all():
+        if vector.shape != (512,) or not np.isfinite(vector).all():
             raise ValueError("Stored gallery embedding has an invalid shape or value.")
         norm = float(np.linalg.norm(vector))
         if norm <= 1e-12:
@@ -75,6 +67,21 @@ def match_gallery(query, gallery, *, index_path: Path, encryption_key: bytes, mo
                 _save_index(faiss, index, index_path, encryption_key, model_version, fingerprint, animal_ids)
             indexed_ids = animal_ids
             _CACHE = (cache_key, index, indexed_ids)
+    return index, indexed_ids
+
+
+def match_gallery(query, gallery, *, index_path: Path, encryption_key: bytes, model_version: str):
+    """Return (animal id, cosine score) for gallery rows (animal id, JSON vector)."""
+    if not gallery:
+        return None, None
+    query_vector = np.asarray(query, dtype=np.float32)
+    if query_vector.ndim != 1 or query_vector.size != 512 or not np.isfinite(query_vector).all():
+        raise ValueError("Query embedding has an invalid shape or value.")
+    query_norm = float(np.linalg.norm(query_vector))
+    if query_norm <= 1e-12:
+        raise ValueError("Query embedding has zero magnitude.")
+    query_vector /= query_norm
+    index, indexed_ids = ensure_gallery_index(gallery, index_path=index_path, encryption_key=encryption_key, model_version=model_version)
 
     similarities, positions = index.search(np.ascontiguousarray(query_vector.reshape(1, -1)), 1)
     position = int(positions[0, 0])

@@ -22,7 +22,7 @@ MuzzleID is a secured single-operator prototype for cattle records and muzzle-im
 | YOLO muzzle detection, validated crop pipeline, population-level biometric release evidence | **Not available**; verified muzzle annotations, data provenance, and independent evaluation are required |
 | Multi-user roles, organization isolation, MFA, key-management service | Not available; restrict this prototype to one trusted operator |
 
-Model files and raw datasets are local-only and excluded from Git. A clone therefore needs to run training before biometric inference is available.
+Model files and raw datasets are local-only and excluded from Git. A clone therefore needs to provide the paired `models/best_model.pt` and `models/calibration.json` files before biometric inference is available. In this repository's Docker Compose setup, `./models` is mounted read-only at `/app/models`; verify both files exist in that host directory before starting the service. On startup, the API loads and validates the matching model/calibration pair, then loads or rebuilds the encrypted FAISS gallery from versioned database embeddings. If artifacts or FAISS are missing or invalid, startup logs the cause and `/api/health` exposes it as `biometric_engine_reason` rather than reporting matching as ready.
 
 ## Install
 

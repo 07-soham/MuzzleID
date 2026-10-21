@@ -74,14 +74,6 @@ def faiss_available() -> bool:
     return check_faiss()
 
 
-def faiss_available() -> bool:
-    try:
-        import faiss  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 def embed_images(raw_images: list[bytes]):
     loaded = artifacts()
     if loaded is None:

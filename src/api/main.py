@@ -23,17 +23,41 @@ from sqlalchemy import select, func, or_, text, delete, update
 from src.config import ROOT, get_settings
 from src.database.models import Animal, AnimalImage, ImageEmbedding, RegistrationRequest, Verification, InsurancePolicy, OperationalAlert, make_session_factory
 from src.inference.engine import embed_images, faiss_available, match_embedding, model_state
+from src.inference.faiss_gallery import ensure_gallery_index
 from src.inference.quality import inspect_image
 from src.security.crypto import data_key_bytes, decrypt_bytes, encrypt_bytes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("muzzleid")
 SessionFactory = make_session_factory()
+ENGINE_STARTUP_STATE = {"initialized": False, "reason": "Biometric engine startup preflight has not run."}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global ENGINE_STARTUP_STATE
     reconcile_storage()
+    pipeline = model_state()
+    if not pipeline["available"]:
+        ENGINE_STARTUP_STATE = {"initialized": False, "reason": pipeline.get("reason", "Model artifacts are unavailable.")}
+        log.error("Biometric engine startup preflight failed: %s", ENGINE_STARTUP_STATE["reason"])
+        yield
+        return
+    if not faiss_available():
+        ENGINE_STARTUP_STATE = {"initialized": False, "reason": "FAISS runtime is unavailable. Install the matching faiss-cpu dependency."}
+        log.error("Biometric engine startup preflight failed: %s", ENGINE_STARTUP_STATE["reason"])
+        yield
+        return
+    try:
+        key = data_key_bytes(get_settings().get("data_key", ""))
+        with SessionFactory() as db:
+            gallery = _load_current_gallery(db, pipeline["model_version"], key)
+        index, identities = ensure_gallery_index(gallery, index_path=get_settings()["index_path"], encryption_key=key, model_version=pipeline["model_version"])
+        ENGINE_STARTUP_STATE = {"initialized": True, "reason": None, "model_version": pipeline["model_version"], "gallery_identities": len(identities)}
+        log.info("Biometric engine initialized at startup: model=%s gallery_identities=%d persisted_index=%s", pipeline["model_version"], len(identities), index is not None)
+    except Exception as exc:
+        ENGINE_STARTUP_STATE = {"initialized": False, "reason": "Biometric engine startup failed while loading encrypted gallery data."}
+        log.exception("Biometric engine startup preflight failed")
     yield
 
 
@@ -72,6 +96,19 @@ def _safe_upload_path(upload_dir: Path, storage_name: str) -> Path:
     if path.is_symlink() or path.resolve().parent != root:
         return root / "__invalid_storage_path__"
     return path
+
+
+def _load_current_gallery(db, model_version, encryption_key):
+    rows = db.execute(select(Animal.id, ImageEmbedding.image_id, ImageEmbedding.vector_encrypted)
+                      .join(AnimalImage, AnimalImage.animal_id == Animal.id)
+                      .join(ImageEmbedding, ImageEmbedding.image_id == AnimalImage.id)
+                      .where(Animal.status == "prototype_ready", ImageEmbedding.model_version == model_version)).all()
+    gallery = []
+    for animal_id, image_id, encrypted in rows:
+        ciphertext = __import__("base64").urlsafe_b64decode(encrypted.encode("ascii"))
+        vector_json = decrypt_bytes(ciphertext, encryption_key, f"muzzleid-embedding:{image_id}:{model_version}").decode("utf-8")
+        gallery.append((animal_id, vector_json))
+    return gallery
 
 
 app = FastAPI(title="MuzzleID API", version="0.2.0", description="Secured prototype for full-image cattle identity embeddings; not validated for consequential decisions.", lifespan=lifespan)
@@ -295,15 +332,17 @@ def health():
         log.exception("Database health check failed")
     pipeline = model_state()
     model_available = pipeline["available"]
+    engine_ready = database_available and model_available and faiss_available() and ENGINE_STARTUP_STATE.get("initialized", False)
     return {
         "status": "ok" if database_available else "degraded",
         "database_available": database_available,
         "model_available": model_available,
         "detector_available": False,
-        "index_available": database_available and model_available and faiss_available(),
+        "index_available": engine_ready,
         "gallery_index_persisted": get_settings()["index_path"].is_file(),
         "calibrated_thresholds_available": model_available,
-        "verification_available": database_available and model_available and faiss_available(),
+        "verification_available": engine_ready,
+        "biometric_engine_reason": None if engine_ready else (ENGINE_STARTUP_STATE.get("reason") or pipeline.get("reason") or "Biometric runtime dependencies are unavailable."),
         "decision_thresholds": "Prototype calibration" if model_available else "Not available",
         "model_version": pipeline.get("model_version"),
         "model_limitations": pipeline.get("limitations", []),
@@ -591,12 +630,7 @@ async def verify_animal(request: Request, image: UploadFile = File(...)):
     try:
         encryption_key = data_key_bytes(get_settings().get("data_key", ""))
         with SessionFactory.begin() as db:
-            rows = db.execute(select(Animal.id, ImageEmbedding.image_id, ImageEmbedding.vector_encrypted).join(AnimalImage, AnimalImage.animal_id == Animal.id).join(ImageEmbedding, ImageEmbedding.image_id == AnimalImage.id).where(Animal.status == "prototype_ready", ImageEmbedding.model_version == version)).all()
-            gallery = []
-            for row in rows:
-                encrypted = __import__("base64").urlsafe_b64decode(row.vector_encrypted.encode("ascii"))
-                vector_json = decrypt_bytes(encrypted, encryption_key, f"muzzleid-embedding:{row.image_id}:{version}").decode("utf-8")
-                gallery.append((row.id, vector_json))
+            gallery = _load_current_gallery(db, version, encryption_key)
             animal_id, similarity, decision = match_embedding(vectors[0], gallery, index_path=get_settings()["index_path"], key=encryption_key)
             event_id = str(uuid4())
             db.add(Verification(id=event_id, animal_id=animal_id if decision != "UNKNOWN" else None, decision=decision, similarity=similarity, reason="Prototype full-image embedding with training-identity image-split calibration; human review required."))

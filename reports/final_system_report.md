@@ -4,6 +4,10 @@
 
 **Not launch-ready for biometric identity decisions.** Core prototype workflows, software tests, model loading, calibration, and FAISS recovery passed local checks, but the held-out unknown-animal false-accept rate was 13.68% (16 of 117 queries). The model uses full images because the dataset has no verified muzzle boxes or detector labels. Label provenance and population representativeness are also unverified. Do not rely on prototype results for ownership, insurance, fraud, veterinary, or other consequential decisions.
 
+## Biometric engine configuration diagnosis
+
+On the current workstation, the configured model and calibration files exist and load as matching version `d04c1ccd7ff1aeaa`; FAISS imports, and authenticated live `/api/health` reports `verification_available: true`. The configuration error is reproducible on deployments without these artifacts: `models/` is intentionally excluded from Git, while Compose expects `./models/best_model.pt` and `./models/calibration.json` mounted at `/app/models`. The service previously only checked model availability when health was requested and did not initialize the model/gallery during startup. Startup now validates and warms the model/calibration pair, loads or rebuilds the encrypted FAISS index and animal mapping from persistent embeddings, logs the precise preflight failure, and exposes `biometric_engine_reason` in health responses. A clean clone must provision the paired artifacts; the training dataset is also local-only and is not available for automatic retraining in a fresh checkout.
+
 ## Implemented
 
 - Added Alembic schema history, including a migration from one embedding per image to model-versioned embeddings while preserving old vectors.
@@ -13,6 +17,7 @@
 - Trained and evaluated an ImageNet-initialized ResNet-50 with a 512D normalized embedding head and identity-disjoint partitions. Kept the separate `data/test` tree out of training because its identity mapping is not verified.
 - Updated Docker configuration with PostgreSQL, model dependencies, non-root/read-only runtime settings, local-only port binding, secret-safe database URL construction, and persistent data volumes.
 - Updated README with setup, model limitations, reindex workflow, API routes, recovery guidance, and verification commands.
+- Added automatic startup engine preflight and current-version FAISS gallery restoration; health reports readiness only after database, model/calibration, and FAISS checks pass.
 
 ## Model run and held-out metrics
 
@@ -35,12 +40,13 @@ These are small-sample, folder-identity-disjoint metrics on the current training
 
 | Command or check | Result |
 |---|---|
-| `python -m pytest -q -p no:cacheprovider --tb=short tests` | 12 passed |
-| `python -m scripts.release_e2e` | Passed: actual checkpoint registration, reindex, known match, unknown rejection in selected case, invalid-image HTTP 422, encrypted image retrieval, record/history restart persistence, FAISS recovery, corrupt-cache rebuild |
+| `python -m pytest -q -p no:cacheprovider --tb=short tests` | 13 passed |
+| `python -m scripts.release_e2e` | Passed: startup preflight, actual checkpoint registration, reindex, known match, unknown rejection in selected case, invalid-image HTTP 422, encrypted image retrieval, record/history restart persistence, startup FAISS mapping recovery, corrupt-cache rebuild |
 | `python -m compileall -q src migrations scripts tests` | Passed |
 | `node --check web\api.js` and `node --check web\app.js` | Passed |
 | `python -m alembic current` | `0004_versioned_embeddings (head)` |
 | `docker compose config -q` | Passed |
+| Live service startup and authenticated health | Login 200; database/model/FAISS ready, `verification_available: true`; listener stopped afterward |
 | Live loopback smoke check | Homepage 200, app JS 200, configured session, unauthenticated health 401; listener stopped afterward |
 | `docker info` / Docker deployment run | **Blocked:** Docker Desktop Linux Engine named pipe is unavailable in this environment |
 | Real YOLO detector validation | **Blocked:** no verified muzzle bounding-box annotations/model artifacts |

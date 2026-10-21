@@ -108,6 +108,16 @@ def test_private_api_requires_operator_session(monkeypatch, tmp_path):
         engine.dispose()
 
 
+def test_startup_health_exposes_missing_model_artifact_reason(service):
+    client, _, _, _ = service
+    health = client.get("/api/health")
+    assert health.status_code == 200
+    assert health.json()["database_available"] is True
+    assert health.json()["model_available"] is False
+    assert health.json()["verification_available"] is False
+    assert "trained checkpoint" in health.json()["biometric_engine_reason"]
+
+
 def test_animal_edit_protected_images_policy_alerts_analytics_and_delete(service):
     client, factory, uploads, _ = service
     first = client.post("/api/animals", headers={"Idempotency-Key": "registry-lifecycle-0001"}, data={"name": "=Formula cow", "ear_tag": "DUP-1"}, files=[("images", ("a.jpg", jpeg(), "image/jpeg"))])

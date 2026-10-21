@@ -61,6 +61,10 @@ def main():
         with TestClient(api.app) as client:
             login = client.post("/api/login", json={"password": settings["operator_password"]})
             assert_status(login, 200, "operator login")
+            health = client.get("/api/health")
+            assert_status(health, 200, "startup biometric health")
+            if not health.json()["verification_available"] or health.json()["model_version"] != inference_engine.artifacts()[2]:
+                raise AssertionError(f"Biometric engine did not initialize on startup: {health.json()}")
             registered = client.post("/api/animals", headers=headers, data={"name": "Release test animal", "ear_tag": "E2E-001"}, files=registration_files)
             assert_status(registered, 200, "real model registration")
             animal_id = registered.json()["id"]
@@ -107,6 +111,8 @@ def main():
         faiss_gallery._CACHE = None
         with TestClient(api.app) as client:
             assert_status(client.post("/api/login", json={"password": settings["operator_password"]}), 200, "restart login")
+            if not index_path.is_file() or not api.ENGINE_STARTUP_STATE["initialized"] or api.ENGINE_STARTUP_STATE["gallery_identities"] != 1:
+                raise AssertionError("Startup did not restore the encrypted FAISS gallery and identity mapping from persistent records.")
             records = client.get("/api/animals", params={"q": "E2E-001"}).json()
             if records["total"] != 1 or records["items"][0]["id"] != animal_id:
                 raise AssertionError("Animal record did not survive service restart.")
