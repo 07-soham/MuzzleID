@@ -586,7 +586,13 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
         with SessionFactory.begin() as db:
             animal = Animal(id=animal_id, name=name[:120], breed=breed[:120], ear_tag=ear_tag[:120], sex=sex[:32], date_of_birth=date_of_birth[:32], status="prototype_ready" if vectors else "pending_model")
             db.add(animal)
+            # These rows are linked by foreign keys, but ImageEmbedding has no
+            # ORM relationship to AnimalImage. Flush the parent records before
+            # adding their embeddings so databases with FK enforcement (SQLite
+            # and PostgreSQL) always see the referenced rows first.
+            db.flush()
             db.add_all([item for _, item in saved])
+            db.flush()
             if vectors:
                 db.add_all([ImageEmbedding(image_id=item.id, model_version=model_version, vector_encrypted=__import__("base64").urlsafe_b64encode(encrypt_bytes(__import__("json").dumps(vector, separators=(",", ":")).encode(), encryption_key, f"muzzleid-embedding:{item.id}:{model_version}")).decode("ascii")) for (_, item), vector in zip(saved, vectors)])
             db.add(RegistrationRequest(idempotency_key=idempotency_key, animal_id=animal_id))

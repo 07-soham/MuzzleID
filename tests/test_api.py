@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import create_engine, func, select
+from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
 
 from src.api import main as api
@@ -21,6 +22,9 @@ def jpeg(size=(320, 240), color=(70, 110, 80)):
 def service(tmp_path, monkeypatch):
     database = tmp_path / "service.sqlite"
     engine = create_engine(f"sqlite:///{database}", connect_args={"check_same_thread": False})
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(connection, _record):
+        connection.execute("PRAGMA foreign_keys=ON")
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     uploads = tmp_path / "uploads"
@@ -28,6 +32,7 @@ def service(tmp_path, monkeypatch):
     settings = {"database_url": f"sqlite:///{database}", "model_path": tmp_path / "missing-model.pt", "calibration_path": tmp_path / "missing-calibration.json", "upload_dir": uploads, "index_path": tmp_path / "gallery.index.enc", "max_upload_bytes": 12 * 1024 * 1024, "max_registration_bytes": 32 * 1024 * 1024, "operator_password": "test-operator-password-2026", "session_secret": "test-session-secret-value-long-enough-32-bytes", "data_key": "dGVzdC1rZXktbXV6emxlaWQtMzItYnl0ZXMta2V5ISE=", "cookie_secure": False}
     monkeypatch.setattr(api, "get_settings", lambda: settings)
     monkeypatch.setattr(inference_engine, "get_settings", lambda: settings)
+    api.REQUEST_ATTEMPTS.clear()
     with TestClient(api.app) as client:
         login = client.post("/api/login", json={"password": settings["operator_password"]})
         assert login.status_code == 200
@@ -55,6 +60,24 @@ def test_registration_persists_reference_images_and_replay_is_idempotent(service
     with factory() as db:
         assert db.scalar(select(func.count()).select_from(Animal)) == 1
         assert db.scalar(select(func.count()).select_from(AnimalImage)) == 2
+
+
+def test_registration_flushes_image_rows_before_biometric_embeddings(service, monkeypatch):
+    client, factory, _, _ = service
+    monkeypatch.setattr(api, "model_state", lambda: {"available": True, "model_version": "test-model"})
+    monkeypatch.setattr(api, "embed_images", lambda _images: ([[0.1, 0.2, 0.3]], "test-model", {}))
+    response = client.post(
+        "/api/animals",
+        headers={"Idempotency-Key": "register-embedding-order-0001"},
+        data={"name": "Embedding order", "ear_tag": "FK-001", "breed": "Gir", "sex": "Male", "date_of_birth": "1111-11-11"},
+        files=[("images", ("muzzle.jpg", jpeg(), "image/jpeg"))],
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "prototype_ready"
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Animal)) == 1
+        assert db.scalar(select(func.count()).select_from(AnimalImage)) == 1
+        assert db.scalar(select(func.count()).select_from(api.ImageEmbedding)) == 1
 
 
 def test_registration_rejects_invalid_and_duplicate_image_without_partial_records(service):
