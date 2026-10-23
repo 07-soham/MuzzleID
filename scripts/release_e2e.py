@@ -65,7 +65,7 @@ def main():
             assert_status(health, 200, "startup biometric health")
             if not health.json()["verification_available"] or health.json()["model_version"] != inference_engine.artifacts()[2]:
                 raise AssertionError(f"Biometric engine did not initialize on startup: {health.json()}")
-            registered = client.post("/api/animals", headers=headers, data={"name": "Release test animal", "ear_tag": "E2E-001"}, files=registration_files)
+            registered = client.post("/api/animals", headers=headers, data={"name": "Release test animal", "ear_tag": "E2E-001", "breed": "", "sex": "", "date_of_birth": ""}, files=registration_files)
             assert_status(registered, 200, "real model registration")
             animal_id = registered.json()["id"]
             if registered.json()["status"] != "prototype_ready":
