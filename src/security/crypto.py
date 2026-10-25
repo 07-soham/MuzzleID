@@ -32,3 +32,16 @@ def decrypt_bytes(envelope: bytes, key: bytes, associated_data: str) -> bytes:
     nonce = envelope[len(MAGIC):len(MAGIC) + 12]
     ciphertext = envelope[len(MAGIC) + 12:]
     return AESGCM(key).decrypt(nonce, ciphertext, associated_data.encode("utf-8"))
+
+
+def encrypted_muzzle_id(animal_id: str, key: bytes | None = None) -> str:
+    """Generate a persistent, unique encrypted/authenticated muzzle identification number for an animal.
+    Format: MZID-XXXX-XXXX-XXXX-XXXX using HMAC-SHA256 keyed with the server's private data key.
+    """
+    import hmac
+    from hashlib import sha256
+    if not key:
+        from src.config import get_settings
+        key = data_key_bytes(get_settings().get("data_key", ""))
+    mac = hmac.new(key, f"muzzleid-identity:{animal_id}".encode("utf-8"), sha256).hexdigest().upper()
+    return f"MZID-{mac[:4]}-{mac[4:8]}-{mac[8:12]}-{mac[12:16]}"

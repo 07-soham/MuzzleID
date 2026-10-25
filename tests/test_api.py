@@ -80,6 +80,23 @@ def test_registration_flushes_image_rows_before_biometric_embeddings(service, mo
         assert db.scalar(select(func.count()).select_from(api.ImageEmbedding)) == 1
 
 
+def test_registry_applies_biometric_status_filter_before_pagination(service):
+    client, _, _, _ = service
+    created = client.post(
+        "/api/animals",
+        headers={"Idempotency-Key": "registry-status-filter-0001"},
+        data={"name": "Pending profile", "ear_tag": "FILTER-001"},
+        files=[("images", ("reference.jpg", jpeg(), "image/jpeg"))],
+    )
+    assert created.status_code == 200, created.text
+    pending = client.get("/api/animals", params={"status": "pending_model", "offset": 0, "limit": 10})
+    ready = client.get("/api/animals", params={"status": "prototype_ready", "offset": 0, "limit": 10})
+    assert pending.status_code == ready.status_code == 200
+    assert pending.json()["total"] == 1
+    assert len(pending.json()["items"]) == 1
+    assert ready.json()["total"] == 0
+
+
 def test_registration_rejects_invalid_and_duplicate_image_without_partial_records(service):
     client, factory, uploads, _ = service
     header = {"Idempotency-Key": "register-request-0002"}
@@ -213,3 +230,63 @@ def test_storage_recovery_disables_broken_profile_and_removes_old_orphans(servic
     with factory() as db:
         assert db.get(Animal, animal_id).status == "storage_error"
         assert db.scalar(select(func.count()).select_from(AnimalImage).where(AnimalImage.animal_id == animal_id)) == 1
+
+
+def test_encrypted_muzzle_id_lifecycle_and_insurance_report(service):
+    client, factory, _, _ = service
+    # 1. Register animal and check persistent encrypted muzzle ID returned
+    response = client.post(
+        "/api/animals",
+        headers={"Idempotency-Key": "muzzle-id-test-0001"},
+        data={"name": "Muzzle Cow", "ear_tag": "TAG-M1", "breed": "Jersey"},
+        files=[("images", ("cow.jpg", jpeg(), "image/jpeg"))],
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "muzzle_id" in data
+    assert data["muzzle_id"].startswith("MZID-")
+    animal_id = data["id"]
+    muzzle_id = data["muzzle_id"]
+
+    # 2. Check detail contains muzzle_id and policies/verifications lists
+    detail = client.get(f"/api/animals/{animal_id}").json()
+    assert detail["muzzle_id"] == muzzle_id
+    assert "policies" in detail
+    assert "verifications" in detail
+
+    # 3. Search registry by muzzle_id
+    search_res = client.get("/api/animals", params={"q": muzzle_id[:11]}).json()
+    assert search_res["total"] == 1
+    assert search_res["items"][0]["id"] == animal_id
+    assert search_res["items"][0]["muzzle_id"] == muzzle_id
+
+    # 4. Create insurance policy and check insurance policies API includes animal info
+    today = __import__("datetime").date.today()
+    policy = client.post(
+        "/api/insurance/policies",
+        json={
+            "animal_id": animal_id,
+            "provider": "AgriCover National",
+            "policy_number": "POL-9999",
+            "coverage_amount": 50000.0,
+            "start_date": today.isoformat(),
+            "end_date": today.replace(year=today.year + 1).isoformat(),
+            "notes": "Premium cattle underwriting coverage",
+        },
+    )
+    assert policy.status_code == 201
+    assert policy.json()["muzzle_id"] == muzzle_id
+    assert policy.json()["animal_name"] == "Muzzle Cow"
+
+    policies_list = client.get("/api/insurance/policies").json()
+    assert len(policies_list) >= 1
+    matched_p = next(p for p in policies_list if p["id"] == policy.json()["id"])
+    assert matched_p["animal_name"] == "Muzzle Cow"
+    assert matched_p["muzzle_id"] == muzzle_id
+
+    # 5. Check insurance CSV report
+    insurance_csv = client.get("/api/reports/insurance.csv")
+    assert insurance_csv.status_code == 200
+    assert "POL-9999" in insurance_csv.text
+    assert muzzle_id in insurance_csv.text
+    assert "AgriCover National" in insurance_csv.text

@@ -25,7 +25,7 @@ from src.database.models import Animal, AnimalImage, ImageEmbedding, Registratio
 from src.inference.engine import embed_images, faiss_available, match_embedding, model_state
 from src.inference.faiss_gallery import ensure_gallery_index
 from src.inference.quality import inspect_image
-from src.security.crypto import data_key_bytes, decrypt_bytes, encrypt_bytes
+from src.security.crypto import data_key_bytes, decrypt_bytes, encrypt_bytes, encrypted_muzzle_id
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("muzzleid")
@@ -351,12 +351,15 @@ def health():
 
 
 @app.get("/api/animals", dependencies=[Depends(require_session)])
-def list_animals(q: str = Query("", max_length=120), offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=100), sort: str = Query("created_at", pattern="^(created_at|name|ear_tag)$")):
+def list_animals(q: str = Query("", max_length=120), offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=100), sort: str = Query("created_at", pattern="^(created_at|name|ear_tag)$"), status: Literal["all", "prototype_ready", "pending_model", "reindex_required", "stale_model", "storage_error"] = "all"):
     with SessionFactory() as db:
         statement = select(Animal)
         if q.strip():
             needle = f"%{q.strip()}%"
-            statement = statement.where(or_(Animal.name.ilike(needle), Animal.ear_tag.ilike(needle), Animal.breed.ilike(needle), Animal.id.ilike(needle)))
+            statement = statement.where(or_(Animal.name.ilike(needle), Animal.ear_tag.ilike(needle), Animal.breed.ilike(needle), Animal.id.ilike(needle), Animal.muzzle_id.ilike(needle)))
+        if status != "all":
+            matching_ids = [animal_id for animal_id, profile_status in _current_profile_statuses(db).items() if profile_status == status]
+            statement = statement.where(Animal.id.in_(matching_ids))
         total = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
         sort_column = {"created_at": Animal.created_at, "name": Animal.name, "ear_tag": Animal.ear_tag}[sort]
         order = sort_column.desc() if sort == "created_at" else sort_column.asc()
@@ -372,14 +375,22 @@ def list_animals(q: str = Query("", max_length=120), offset: int = Query(0, ge=0
         for image_id, version in embeddings:
             versions_by_image.setdefault(image_id, set()).add(version)
         current_version = model_state().get("model_version")
-        return {"items": [{"id": a.id, "name": a.name, "breed": a.breed, "ear_tag": a.ear_tag, "status": _effective_profile_status(a.status, image_ids_by_animal.get(a.id, []), versions_by_image, current_version), "image_count": len(image_ids_by_animal.get(a.id, [])), "created_at": a.created_at.isoformat()} for a in animals], "total": total, "offset": offset, "limit": limit}
+        try:
+            key = data_key_bytes(get_settings().get("data_key", ""))
+        except Exception:
+            key = None
+        return {"items": [{"id": a.id, "muzzle_id": a.muzzle_id or (encrypted_muzzle_id(a.id, key) if key else ""), "name": a.name, "breed": a.breed, "ear_tag": a.ear_tag, "status": _effective_profile_status(a.status, image_ids_by_animal.get(a.id, []), versions_by_image, current_version), "image_count": len(image_ids_by_animal.get(a.id, [])), "created_at": a.created_at.isoformat()} for a in animals], "total": total, "offset": offset, "limit": limit}
 
 
 @app.get("/api/animal-options", dependencies=[Depends(require_session)])
 def animal_options():
     with SessionFactory() as db:
-        rows = db.execute(select(Animal.id, Animal.name, Animal.ear_tag).order_by(Animal.name, Animal.id).limit(5000)).all()
-        return [{"id": animal_id, "label": " · ".join(part for part in (name or "Unnamed animal", ear_tag) if part)} for animal_id, name, ear_tag in rows]
+        try:
+            key = data_key_bytes(get_settings().get("data_key", ""))
+        except Exception:
+            key = None
+        rows = db.execute(select(Animal.id, Animal.name, Animal.ear_tag, Animal.muzzle_id).order_by(Animal.name, Animal.id).limit(5000)).all()
+        return [{"id": animal_id, "muzzle_id": muzzle_id or (encrypted_muzzle_id(animal_id, key) if key else ""), "label": " · ".join(part for part in (name or "Unnamed animal", ear_tag, (muzzle_id or (encrypted_muzzle_id(animal_id, key) if key else ""))[:14]) if part)} for animal_id, name, ear_tag, muzzle_id in rows]
 
 
 @app.get("/api/animals/{animal_id}", dependencies=[Depends(require_session)])
@@ -394,7 +405,28 @@ def get_animal(animal_id: str):
             for image_id, version in db.execute(select(ImageEmbedding.image_id, ImageEmbedding.model_version).where(ImageEmbedding.image_id.in_(image_ids))).all():
                 versions_by_image.setdefault(image_id, set()).add(version)
         status = _effective_profile_status(animal.status, image_ids, versions_by_image, model_state().get("model_version"))
-        return {"id": animal.id, "name": animal.name, "breed": animal.breed, "ear_tag": animal.ear_tag, "sex": animal.sex, "date_of_birth": animal.date_of_birth, "status": status, "organization_id": animal.organization_id, "created_at": animal.created_at.isoformat(), "images": [{"id": image.id, "width": image.width, "height": image.height, "format": image.image_format, "quality": __import__("json").loads(image.quality_json or "{}"), "content_sha256": image.content_sha256} for image in animal.images]}
+        policies = db.scalars(select(InsurancePolicy).where(InsurancePolicy.animal_id == animal_id).order_by(InsurancePolicy.created_at.desc())).all()
+        verifications = db.scalars(select(Verification).where(Verification.animal_id == animal_id).order_by(Verification.created_at.desc()).limit(15)).all()
+        try:
+            key = data_key_bytes(get_settings().get("data_key", ""))
+        except Exception:
+            key = None
+        mid = animal.muzzle_id or (encrypted_muzzle_id(animal.id, key) if key else "")
+        return {
+            "id": animal.id,
+            "muzzle_id": mid,
+            "name": animal.name,
+            "breed": animal.breed,
+            "ear_tag": animal.ear_tag,
+            "sex": animal.sex,
+            "date_of_birth": animal.date_of_birth,
+            "status": status,
+            "organization_id": animal.organization_id,
+            "created_at": animal.created_at.isoformat(),
+            "images": [{"id": image.id, "width": image.width, "height": image.height, "format": image.image_format, "quality": __import__("json").loads(image.quality_json or "{}"), "content_sha256": image.content_sha256} for image in animal.images],
+            "policies": [_policy_json(p) for p in policies],
+            "verifications": [{"id": v.id, "decision": v.decision, "similarity": v.similarity, "reason": v.reason, "created_at": v.created_at.isoformat()} for v in verifications],
+        }
 
 
 @app.patch("/api/animals/{animal_id}", dependencies=[Depends(require_session)])
@@ -539,8 +571,10 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
             animal = db.get(Animal, prior.animal_id)
             if animal is None:
                 raise HTTPException(409, "This idempotency key references a missing animal record; contact the operator to repair the database.")
-            return {"id": prior.animal_id, "status": animal.status, "image_count": len(animal.images), "persisted": True, "replayed": True, "message": "This registration request was already saved."}
+            mid = animal.muzzle_id or encrypted_muzzle_id(prior.animal_id, encryption_key)
+            return {"id": prior.animal_id, "muzzle_id": mid, "name": animal.name, "ear_tag": animal.ear_tag, "status": animal.status, "image_count": len(animal.images), "persisted": True, "replayed": True, "message": "This registration request was already saved."}
     animal_id = str(uuid4())
+    muzzle_id = encrypted_muzzle_id(animal_id, encryption_key)
     saved: list[tuple[Path, AnimalImage]] = []
     raw_images: list[bytes] = []
     seen_hashes: set[str] = set()
@@ -584,7 +618,7 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
                 log.exception("Reference-image embedding failed")
                 raise HTTPException(503, "The biometric model could not process these images. No record was saved; contact the operator.") from exc
         with SessionFactory.begin() as db:
-            animal = Animal(id=animal_id, name=name[:120], breed=breed[:120], ear_tag=ear_tag[:120], sex=sex[:32], date_of_birth=date_of_birth[:32], status="prototype_ready" if vectors else "pending_model")
+            animal = Animal(id=animal_id, muzzle_id=muzzle_id, name=name[:120], breed=breed[:120], ear_tag=ear_tag[:120], sex=sex[:32], date_of_birth=date_of_birth[:32], status="prototype_ready" if vectors else "pending_model")
             db.add(animal)
             # These rows are linked by foreign keys, but ImageEmbedding has no
             # ORM relationship to AnimalImage. Flush the parent records before
@@ -598,7 +632,7 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
             db.add(RegistrationRequest(idempotency_key=idempotency_key, animal_id=animal_id))
         profile_status = "prototype_ready" if vectors else "pending_model"
         message = "Animal record and biometric profile are saved." if vectors else "Animal record and images are saved. Biometric profile creation is pending a configured model."
-        return {"id": animal_id, "status": profile_status, "image_count": len(saved), "persisted": True, "replayed": False, "message": message}
+        return {"id": animal_id, "muzzle_id": muzzle_id, "name": name, "ear_tag": ear_tag, "status": profile_status, "image_count": len(saved), "persisted": True, "replayed": False, "message": message}
     except HTTPException:
         for path, _ in saved:
             path.unlink(missing_ok=True)
@@ -612,7 +646,8 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
             prior = db.get(RegistrationRequest, idempotency_key)
             if prior:
                 animal = db.get(Animal, prior.animal_id)
-                return {"id": prior.animal_id, "status": animal.status if animal else "pending_model", "image_count": len(animal.images) if animal else 0, "persisted": animal is not None, "replayed": True, "message": "This registration request was already saved."}
+                mid = (animal.muzzle_id or encrypted_muzzle_id(prior.animal_id, encryption_key)) if animal else ""
+                return {"id": prior.animal_id, "muzzle_id": mid, "status": animal.status if animal else "pending_model", "image_count": len(animal.images) if animal else 0, "persisted": animal is not None, "replayed": True, "message": "This registration request was already saved."}
         log.exception("Animal registration failed")
         raise HTTPException(500, "Registration could not be saved.")
 
@@ -635,6 +670,7 @@ async def verify_animal(request: Request, image: UploadFile = File(...)):
         raise HTTPException(503, "Biometric verification is unavailable because the model failed to process the image.") from exc
     try:
         encryption_key = data_key_bytes(get_settings().get("data_key", ""))
+        matched_animal = None
         with SessionFactory.begin() as db:
             gallery = _load_current_gallery(db, version, encryption_key)
             animal_id, similarity, decision = match_embedding(vectors[0], gallery, index_path=get_settings()["index_path"], key=encryption_key)
@@ -642,17 +678,48 @@ async def verify_animal(request: Request, image: UploadFile = File(...)):
             db.add(Verification(id=event_id, animal_id=animal_id if decision != "UNKNOWN" else None, decision=decision, similarity=similarity, reason="Prototype full-image embedding with training-identity image-split calibration; human review required."))
             if decision == "REVIEW":
                 db.add(OperationalAlert(id=str(uuid4()), fingerprint=f"verification-review:{event_id}", animal_id=animal_id, verification_id=event_id, category="verification_review", severity="medium", message="A prototype match requires human review. Verify the animal in person."))
+            if animal_id:
+                matched_record = db.get(Animal, animal_id)
+                if matched_record:
+                    matched_animal = {
+                        "id": matched_record.id,
+                        "muzzle_id": matched_record.muzzle_id or encrypted_muzzle_id(matched_record.id, encryption_key),
+                        "name": matched_record.name,
+                        "ear_tag": matched_record.ear_tag,
+                        "breed": matched_record.breed,
+                        "image_id": matched_record.images[0].id if matched_record.images else None,
+                    }
     except Exception as exc:
         log.exception("Encrypted gallery lookup failed")
         raise HTTPException(503, "The encrypted biometric gallery is unavailable. No identity decision was made.") from exc
-    return {"id": event_id, "animal_id": animal_id if decision != "UNKNOWN" else None, "decision": decision, "similarity": similarity, "model_version": version, "prototype_only": True, "message": "Prototype result only. Confirm identity in person; do not use for ownership or insurance decisions."}
+    return {"id": event_id, "animal_id": animal_id if decision != "UNKNOWN" else None, "decision": decision, "similarity": similarity, "model_version": version, "matched_animal": matched_animal, "prototype_only": True, "message": "Prototype result only. Confirm identity in person; do not use for ownership or insurance decisions."}
 
 
 @app.get("/api/history", dependencies=[Depends(require_session)])
 def history():
     with SessionFactory() as db:
-        rows = db.execute(select(Verification).order_by(Verification.created_at.desc()).limit(100)).scalars().all()
-        return [{"id": x.id, "animal_id": x.animal_id, "decision": x.decision, "similarity": x.similarity, "reason": x.reason, "created_at": x.created_at.isoformat()} for x in rows]
+        rows = db.execute(select(Verification).order_by(Verification.created_at.desc()).limit(200)).scalars().all()
+        animal_ids = [x.animal_id for x in rows if x.animal_id]
+        animals_map = {}
+        if animal_ids:
+            animal_rows = db.scalars(select(Animal).where(Animal.id.in_(animal_ids))).all()
+            try:
+                key = data_key_bytes(get_settings().get("data_key", ""))
+            except Exception:
+                key = None
+            animals_map = {a.id: {"name": a.name, "ear_tag": a.ear_tag, "breed": a.breed, "muzzle_id": a.muzzle_id or (encrypted_muzzle_id(a.id, key) if key else "")} for a in animal_rows}
+        return [{
+            "id": x.id,
+            "animal_id": x.animal_id,
+            "animal_name": animals_map.get(x.animal_id, {}).get("name", ""),
+            "ear_tag": animals_map.get(x.animal_id, {}).get("ear_tag", ""),
+            "breed": animals_map.get(x.animal_id, {}).get("breed", ""),
+            "muzzle_id": animals_map.get(x.animal_id, {}).get("muzzle_id", ""),
+            "decision": x.decision,
+            "similarity": x.similarity,
+            "reason": x.reason,
+            "created_at": x.created_at.isoformat()
+        } for x in rows]
 
 
 def _policy_json(policy):
@@ -673,7 +740,25 @@ def insurance_policies(status: Literal["all", "pending", "active", "expired", "c
         statement = select(InsurancePolicy).order_by(InsurancePolicy.end_date.asc(), InsurancePolicy.created_at.desc())
         if status != "all":
             statement = statement.where(InsurancePolicy.status == status)
-        return [_policy_json(policy) for policy in db.scalars(statement).all()]
+        policies = db.scalars(statement).all()
+        animal_ids = [p.animal_id for p in policies]
+        animals_map = {}
+        if animal_ids:
+            animal_rows = db.scalars(select(Animal).where(Animal.id.in_(animal_ids))).all()
+            try:
+                key = data_key_bytes(get_settings().get("data_key", ""))
+            except Exception:
+                key = None
+            animals_map = {a.id: {"name": a.name, "ear_tag": a.ear_tag, "muzzle_id": a.muzzle_id or (encrypted_muzzle_id(a.id, key) if key else "")} for a in animal_rows}
+        result = []
+        for policy in policies:
+            data = _policy_json(policy)
+            info = animals_map.get(policy.animal_id, {})
+            data["animal_name"] = info.get("name", "")
+            data["ear_tag"] = info.get("ear_tag", "")
+            data["muzzle_id"] = info.get("muzzle_id", "")
+            result.append(data)
+        return result
 
 
 @app.post("/api/insurance/policies", status_code=201, dependencies=[Depends(require_session)])
@@ -681,12 +766,20 @@ def create_insurance_policy(payload: InsurancePolicyCreate):
     if payload.end_date < payload.start_date:
         raise HTTPException(422, "Policy end date must be on or after its start date.")
     with SessionFactory.begin() as db:
-        if db.get(Animal, payload.animal_id) is None:
+        animal = db.get(Animal, payload.animal_id)
+        if animal is None:
             raise HTTPException(404, "Animal record not found.")
         policy = InsurancePolicy(id=str(uuid4()), animal_id=payload.animal_id, provider=payload.provider, policy_number=payload.policy_number, coverage_amount=payload.coverage_amount, start_date=payload.start_date.isoformat(), end_date=payload.end_date.isoformat(), status="expired" if payload.end_date < date.today() else "pending" if payload.start_date > date.today() else "active", notes=payload.notes)
         db.add(policy)
         db.flush()
         result = _policy_json(policy)
+        try:
+            key = data_key_bytes(get_settings().get("data_key", ""))
+        except Exception:
+            key = None
+        result["animal_name"] = animal.name
+        result["ear_tag"] = animal.ear_tag
+        result["muzzle_id"] = animal.muzzle_id or (encrypted_muzzle_id(animal.id, key) if key else "")
     return result
 
 
@@ -753,7 +846,29 @@ def alerts(status: Literal["all", "open", "resolved"] = "open"):
         if status != "all":
             statement = statement.where(OperationalAlert.status == status)
         rows = db.scalars(statement.limit(500)).all()
-        return [{"id": row.id, "animal_id": row.animal_id, "verification_id": row.verification_id, "category": row.category, "severity": row.severity, "message": row.message, "status": row.status, "created_at": row.created_at.isoformat(), "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None} for row in rows]
+        animal_ids = [row.animal_id for row in rows if row.animal_id]
+        animals_map = {}
+        if animal_ids:
+            animal_rows = db.scalars(select(Animal).where(Animal.id.in_(animal_ids))).all()
+            try:
+                key = data_key_bytes(get_settings().get("data_key", ""))
+            except Exception:
+                key = None
+            animals_map = {a.id: {"name": a.name, "ear_tag": a.ear_tag, "muzzle_id": a.muzzle_id or (encrypted_muzzle_id(a.id, key) if key else "")} for a in animal_rows}
+        return [{
+            "id": row.id,
+            "animal_id": row.animal_id,
+            "animal_name": animals_map.get(row.animal_id, {}).get("name", ""),
+            "ear_tag": animals_map.get(row.animal_id, {}).get("ear_tag", ""),
+            "muzzle_id": animals_map.get(row.animal_id, {}).get("muzzle_id", ""),
+            "verification_id": row.verification_id,
+            "category": row.category,
+            "severity": row.severity,
+            "message": row.message,
+            "status": row.status,
+            "created_at": row.created_at.isoformat(),
+            "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None
+        } for row in rows]
 
 
 @app.patch("/api/alerts/{alert_id}", dependencies=[Depends(require_session)])
@@ -781,10 +896,20 @@ def analytics():
         decisions = dict(db.execute(select(Verification.decision, func.count()).where(Verification.created_at >= since).group_by(Verification.decision)).all())
         verified_today = db.scalar(select(func.count()).select_from(Verification).where(Verification.created_at >= today)) or 0
         policy_status = dict(db.execute(select(InsurancePolicy.status, func.count()).group_by(InsurancePolicy.status)).all())
+        total_coverage = db.scalar(select(func.sum(InsurancePolicy.coverage_amount)).where(InsurancePolicy.status == "active")) or 0.0
         open_alerts = db.scalar(select(func.count()).select_from(OperationalAlert).where(OperationalAlert.status == "open")) or 0
         registration_rows = db.execute(select(func.date(Animal.created_at), func.count()).where(Animal.created_at >= since).group_by(func.date(Animal.created_at)).order_by(func.date(Animal.created_at))).all()
         registrations = [{"date": str(day), "count": count} for day, count in registration_rows]
-        return {"total_animals": total_animals, "animal_profiles": animal_status, "verification_today": verified_today, "verification_last_30_days": {decision: decisions.get(decision, 0) for decision in ("VERIFIED", "REVIEW", "UNKNOWN")}, "policies": policy_status, "open_alerts": open_alerts, "registrations_last_30_days": registrations}
+        return {
+            "total_animals": total_animals,
+            "animal_profiles": animal_status,
+            "verification_today": verified_today,
+            "verification_last_30_days": {decision: decisions.get(decision, 0) for decision in ("VERIFIED", "REVIEW", "UNKNOWN")},
+            "policies": policy_status,
+            "total_active_coverage": round(float(total_coverage), 2),
+            "open_alerts": open_alerts,
+            "registrations_last_30_days": registrations
+        }
 
 
 def _csv_safe(value):
@@ -807,15 +932,93 @@ def _csv_response(filename, columns, rows):
 def report_animals():
     with SessionFactory() as db:
         statuses = _current_profile_statuses(db)
-        rows = [(animal.id, animal.name, animal.ear_tag, animal.breed, animal.sex, animal.date_of_birth, statuses[animal.id], animal.created_at) for animal in db.scalars(select(Animal).order_by(Animal.created_at)).all()]
-        return _csv_response("muzzleid-animals.csv", ("id", "name", "ear_tag", "breed", "sex", "date_of_birth", "profile_status", "created_at"), rows)
+        try:
+            key = data_key_bytes(get_settings().get("data_key", ""))
+        except Exception:
+            key = None
+        rows = [
+            (
+                animal.id,
+                animal.muzzle_id or (encrypted_muzzle_id(animal.id, key) if key else ""),
+                animal.name,
+                animal.ear_tag,
+                animal.breed,
+                animal.sex,
+                animal.date_of_birth,
+                statuses[animal.id],
+                animal.created_at,
+            )
+            for animal in db.scalars(select(Animal).order_by(Animal.created_at)).all()
+        ]
+        return _csv_response("muzzleid-animals.csv", ("id", "muzzle_id", "name", "ear_tag", "breed", "sex", "date_of_birth", "profile_status", "created_at"), rows)
 
 
 @app.get("/api/reports/verifications.csv", dependencies=[Depends(require_session)])
 def report_verifications():
     with SessionFactory() as db:
-        rows = db.execute(select(Verification.id, Verification.animal_id, Verification.decision, Verification.similarity, Verification.reason, Verification.created_at).order_by(Verification.created_at)).all()
-        return _csv_response("muzzleid-verifications.csv", ("id", "animal_id", "decision", "similarity", "reason", "created_at"), rows)
+        records = db.execute(select(Verification.id, Verification.animal_id, Verification.decision, Verification.similarity, Verification.reason, Verification.created_at).order_by(Verification.created_at.desc())).all()
+        animal_ids = [r[1] for r in records if r[1]]
+        animals_map = {}
+        if animal_ids:
+            animal_rows = db.scalars(select(Animal).where(Animal.id.in_(animal_ids))).all()
+            try:
+                key = data_key_bytes(get_settings().get("data_key", ""))
+            except Exception:
+                key = None
+            animals_map = {a.id: {"name": a.name, "ear_tag": a.ear_tag, "muzzle_id": a.muzzle_id or (encrypted_muzzle_id(a.id, key) if key else "")} for a in animal_rows}
+        rows = [
+            (
+                v_id,
+                a_id or "",
+                animals_map.get(a_id, {}).get("name", "") if a_id else "",
+                animals_map.get(a_id, {}).get("ear_tag", "") if a_id else "",
+                animals_map.get(a_id, {}).get("muzzle_id", "") if a_id else "",
+                decision,
+                similarity,
+                reason,
+                created_at,
+            )
+            for v_id, a_id, decision, similarity, reason, created_at in records
+        ]
+        return _csv_response("muzzleid-verifications.csv", ("verification_id", "animal_id", "animal_name", "ear_tag", "muzzle_id", "decision", "similarity", "reason", "created_at"), rows)
+
+
+@app.get("/api/reports/insurance.csv", dependencies=[Depends(require_session)])
+def report_insurance():
+    with SessionFactory.begin() as db:
+        _refresh_policy_statuses(db)
+        policies = db.scalars(select(InsurancePolicy).order_by(InsurancePolicy.created_at.desc())).all()
+        animal_ids = [p.animal_id for p in policies]
+        animals_map = {}
+        if animal_ids:
+            animal_rows = db.scalars(select(Animal).where(Animal.id.in_(animal_ids))).all()
+            try:
+                key = data_key_bytes(get_settings().get("data_key", ""))
+            except Exception:
+                key = None
+            animals_map = {a.id: {"name": a.name, "ear_tag": a.ear_tag, "muzzle_id": a.muzzle_id or (encrypted_muzzle_id(a.id, key) if key else "")} for a in animal_rows}
+        rows = [
+            (
+                p.id,
+                p.animal_id,
+                animals_map.get(p.animal_id, {}).get("name", ""),
+                animals_map.get(p.animal_id, {}).get("ear_tag", ""),
+                animals_map.get(p.animal_id, {}).get("muzzle_id", ""),
+                p.provider,
+                p.policy_number,
+                p.coverage_amount,
+                p.start_date,
+                p.end_date,
+                p.status,
+                p.created_at,
+            )
+            for p in policies
+        ]
+        return _csv_response(
+            "muzzleid-insurance-policies.csv",
+            ("policy_id", "animal_id", "animal_name", "ear_tag", "muzzle_id", "provider", "policy_number", "coverage_amount", "start_date", "end_date", "status", "created_at"),
+            rows,
+        )
 
 
 @app.get("/api/settings", dependencies=[Depends(require_session)])
@@ -827,4 +1030,18 @@ def settings_status():
         encryption_configured = True
     except RuntimeError:
         encryption_configured = False
-    return {"operator_password_configured": len(cfg.get("operator_password", "")) >= 12, "session_secret_configured": len(cfg.get("session_secret", "")) >= 32, "data_encryption_configured": encryption_configured, "cookie_secure": cfg.get("cookie_secure", False), "model_available": pipeline["available"], "model_version": pipeline.get("model_version"), "faiss_available": faiss_available(), "database_type": "postgresql" if cfg["database_url"].startswith("postgresql") else "sqlite", "limitations": pipeline.get("limitations", [])}
+    return {
+        "operator_password_configured": len(cfg.get("operator_password", "")) >= 12,
+        "session_secret_configured": len(cfg.get("session_secret", "")) >= 32,
+        "data_encryption_configured": encryption_configured,
+        "cookie_secure": cfg.get("cookie_secure", False),
+        "model_available": pipeline["available"],
+        "model_version": pipeline.get("model_version"),
+        "faiss_available": faiss_available(),
+        "database_type": "postgresql" if cfg["database_url"].startswith("postgresql") else "sqlite",
+        "faiss_gallery_identities": ENGINE_STARTUP_STATE.get("gallery_identities", 0),
+        "embedding_dimensions": 512,
+        "max_upload_mb": cfg["max_upload_bytes"] // (1024 * 1024),
+        "max_registration_mb": cfg["max_registration_bytes"] // (1024 * 1024),
+        "limitations": pipeline.get("limitations", []),
+    }

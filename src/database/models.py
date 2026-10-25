@@ -14,6 +14,7 @@ class Base(DeclarativeBase):
 class Animal(Base):
     __tablename__ = "animals"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    muzzle_id: Mapped[str] = mapped_column(String(64), default="", index=True)
     name: Mapped[str] = mapped_column(String(120), default="")
     breed: Mapped[str] = mapped_column(String(120), default="")
     ear_tag: Mapped[str] = mapped_column(String(120), default="", index=True)

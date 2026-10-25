@@ -1,74 +1,676 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f5f7f2"><title>MuzzleID — Cattle identity, clearly</title>
-  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/styles.css"><link rel="stylesheet" href="/assets/polish.css"><link rel="stylesheet" href="/assets/mobile-fixes.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14532D">
+  <title>MuzzleID — Enterprise Cattle Biometric Identification & Insurance</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/polish.css">
+  <link rel="stylesheet" href="/assets/mobile-fixes.css">
 </head>
 <body>
+  <!-- Operator Authentication Gate -->
   <section id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
     <form id="login-form" class="auth-card">
-      <span class="brand-mark">M</span><p class="eyebrow">MUZZLEID OPERATOR ACCESS</p>
-      <h1 id="auth-title">Sign in to your workspace</h1>
-      <p>Use the operator password configured privately in the server’s <code>.env</code> file.</p>
+      <div class="brand-mark">M</div>
+      <p class="eyebrow">ENTERPRISE BIOMETRIC ACCESS</p>
+      <h1 id="auth-title">Sign in to MuzzleID</h1>
+      <p>Enter the operator password configured in the server's private environment.</p>
       <label for="operator-password">Operator password</label>
-      <input id="operator-password" name="password" type="password" autocomplete="current-password" minlength="12" required>
-      <button class="button primary full" type="submit">Sign in</button>
-      <p id="login-result" class="form-result" role="status" aria-live="polite"></p>
-      <small>For local prototype use. Do not expose the service directly to the public internet.</small>
+      <input id="operator-password" name="password" type="password" autocomplete="current-password" minlength="12" placeholder="••••••••••••" required>
+      <button class="button primary full" type="submit">Sign in to console →</button>
+      <div id="login-result" class="form-result" role="status" aria-live="polite"></div>
+      <small>Secured single-operator biometric console. Keep operator credentials confidential.</small>
     </form>
   </section>
+
+  <!-- Sidebar Navigation -->
   <aside class="sidebar">
-    <a class="brand" href="#landing"><span class="brand-mark">M</span><span>Muzzle<span class="brand-light">ID</span><small>BIOMETRIC IDENTITY</small></span></a>
-    <div class="org"><span class="org-icon">◈</span><span>Field Operations<small>Demo organization</small></span><span class="chev">⌄</span></div>
+    <a class="brand" href="#overview">
+      <span class="brand-mark">M</span>
+      <div class="brand-title">
+        <span class="brand-name">Muzzle<span class="brand-light">ID</span></span>
+        <span class="brand-subtitle">BIOMETRIC IDENTITY</span>
+      </div>
+    </a>
+    <button id="sidebar-close" class="icon-button sidebar-close" type="button" aria-label="Close navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+
+    <div class="org-badge">
+      <span class="org-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="m8 9 4 2.3L16 9m-4 2.3V17"/></svg></span>
+      <div class="org-info">
+        <span class="org-name">Field Operations</span>
+        <span class="org-role">Private workspace</span>
+      </div>
+    </div>
+
     <nav aria-label="Main navigation">
       <p class="nav-label">WORKSPACE</p>
-      <a class="nav-item" href="#overview"><span>▦</span> Dashboard</a>
-      <a class="nav-item" href="#animals"><span>◉</span> Animal registry</a>
-      <a class="nav-item" href="#register"><span>＋</span> Register animal</a>
-      <a class="nav-item" href="#verify"><span>⌕</span> Verify identity</a>
-      <a class="nav-item" href="#history"><span>◷</span> Verification history</a>
+      <a class="nav-item" href="#overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span> <span>Dashboard</span></a>
+      <a class="nav-item" href="#animals"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7 4 4m13 3 3-3M6 10c0-2 2.2-3.5 6-3.5s6 1.5 6 3.5v6a6 6 0 0 1-12 0z"/><path d="M9 13h.01M15 13h.01M10 17c1.2.8 2.8.8 4 0"/></svg></span> <span>Animal registry</span></a>
+      <a class="nav-item" href="#register"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span> <span>Register cattle</span></a>
+      <a class="nav-item" href="#verify"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3m-8 0H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="11" r="3"/><path d="M7.5 19a4.5 4.5 0 0 1 9 0"/></svg></span> <span>Verify identity</span></a>
+      <a class="nav-item" href="#history"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span> <span>Verification history</span></a>
+
       <p class="nav-label section-gap">OPERATIONS</p>
-      <a class="nav-item" href="#insurance"><span>◇</span> Insurance records</a>
-      <a class="nav-item" href="#alerts"><span>⚑</span> Review alerts</a>
-      <a class="nav-item" href="#analytics"><span>▤</span> Analytics</a>
-      <a class="nav-item" href="#reports"><span>▤</span> Reports</a>
-      <a class="nav-item" href="#system"><span>⌁</span> System status</a>
-      <a class="nav-item" href="#settings"><span>⚙</span> Settings</a>
+      <a class="nav-item" href="#insurance"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 20 6v5c0 5-3.3 8.2-8 10-4.7-1.8-8-5-8-10V6z"/><path d="m9 12 2 2 4-4"/></svg></span> <span>Insurance policies</span></a>
+      <a class="nav-item" href="#alerts">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 21 19H3z"/><path d="M12 9v4m0 3h.01"/></svg></span> <span>Review alerts</span>
+        <span id="nav-alert-badge" class="nav-badge" style="display:none;">0</span>
+      </a>
+      <a class="nav-item" href="#analytics"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19V5m0 14h17"/><path d="m7 15 4-4 3 2 5-6"/></svg></span> <span>Analytics</span></a>
+      <a class="nav-item" href="#reports"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></svg></span> <span>Data exports</span></a>
+      <a class="nav-item" href="#system"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h3l2-6 4 12 2-6h5"/><circle cx="12" cy="12" r="9"/></svg></span> <span>System status</span></a>
+      <a class="nav-item" href="#settings"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1a2 2 0 1 1-2.8 2.8l-.1-.1a2 2 0 0 0-3.4 1.4v.3a2 2 0 1 1-4 0v-.2a2 2 0 0 0-3.4-1.4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A2 2 0 0 0 1.6 12h-.2a2 2 0 1 1 0-4h.2A2 2 0 0 0 3 4.6l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A2 2 0 0 0 9.2.4V.2a2 2 0 1 1 4 0v.2a2 2 0 0 0 3.4 1.4l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A2 2 0 0 0 20.8 8h.2a2 2 0 1 1 0 4h-.2a2 2 0 0 0-1.4 3z" transform="translate(1.5 1.5) scale(.875)"/></svg></span> <span>Settings</span></a>
     </nav>
-    <div class="side-bottom"><div class="user-avatar">SO</div><div>Soham Operator<small>Organization admin</small></div><span class="chev">⋯</span></div>
+
+    <div class="side-bottom">
+      <div class="user-avatar">SO</div>
+      <div class="user-meta">
+        <span class="user-name">Soham Operator</span>
+        <span class="user-role">Organization Admin</span>
+      </div>
+    </div>
   </aside>
+
+  <!-- Main Work Area -->
   <main class="main">
-    <header class="topbar"><div><span class="crumb">Workspace</span><span class="slash">/</span><strong id="page-label">Dashboard</strong></div><div class="top-right"><label class="global-search"><span>⌕</span><input id="global-search" type="search" placeholder="Search animals" aria-label="Search animals"></label><span class="env"><i></i> MVP environment</span><button id="logout-button" class="text-button" type="button">Sign out</button></div></header>
-    <section class="content" id="overview">
-      <div class="welcome" data-view="overview"><div><p class="eyebrow">FIELD OPERATIONS <span class="dot">·</span> MUZZLEID</p><h1>Animal operations</h1><p class="subhead">Manage cattle records, policy metadata, review alerts and prototype identification.</p></div><a href="#register" class="button primary">＋ Register an animal</a></div>
-      <div class="landing-hero route-hidden" data-view="landing"><p class="eyebrow">CATTLE IDENTITY, CLEARLY</p><h1>Build trusted animal records<br>from the muzzle up.</h1><p>Register animal details and reference images in one field-ready workspace. Biometric identification remains unavailable until the model pipeline is validated.</p><a href="#overview" class="button primary">Open workspace →</a><a href="#register" class="button secondary">Register an animal</a><span class="landing-note">MVP prototype · No validated identity claims</span></div>
-      <div class="status-banner" data-view="overview system"><span class="status-icon">i</span><div><strong id="status-title">Biometric engine is not configured</strong><p id="status-description">Animal records and image uploads are available. Identity matching will become available after model training and threshold validation.</p></div><span class="status-tag" id="status-tag">SETUP REQUIRED</span></div>
-      <div class="metrics" data-view="overview">
-        <article class="metric"><div class="metric-top"><span>Registered animals</span><span class="metric-icon green">◉</span></div><strong id="animal-count">—</strong><p>Biometric profiles <b>Not available</b></p></article>
-        <article class="metric"><div class="metric-top"><span>Verifications today</span><span class="metric-icon blue">⌕</span></div><strong id="verification-count-today">—</strong><p>Persisted identity checks</p></article>
-        <article class="metric"><div class="metric-top"><span>Open alerts</span><span class="metric-icon amber">⚑</span></div><strong id="open-alert-count">—</strong><p>Requires operator review</p></article>
-        <article class="metric"><div class="metric-top"><span>System status</span><span class="metric-icon green">⌁</span></div><strong class="status-value" id="system-status">Checking…</strong><p id="engine-status">Connecting to MuzzleID API</p></article>
+    <!-- Sticky Top Navigation Bar -->
+    <header class="topbar">
+      <button id="sidebar-toggle" class="icon-button sidebar-toggle" type="button" aria-label="Collapse navigation" aria-expanded="true" title="Collapse navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h16"/></svg></button>
+      <div class="breadcrumbs">
+        <span class="crumb">Workspace</span>
+        <span class="slash">/</span>
+        <strong id="page-label" class="page-title-badge">Dashboard</strong>
       </div>
-      <div class="grid-main" data-view="overview">
-        <article class="panel activity"><div class="panel-heading"><div><h2>Recent activity</h2><p>Latest registration and verification events</p></div><a href="#history">View history →</a></div><div id="recent" class="empty-state"><span class="empty-mark">◷</span><strong>No activity yet</strong><p>New animal registrations and identity checks will appear here.</p></div></article>
-        <article class="panel quick"><div class="panel-heading"><div><h2>Quick actions</h2><p>Common field workflows</p></div></div><a href="#register" class="quick-item"><span class="quick-icon green">＋</span><span><strong>Register an animal</strong><small>Create a record and upload muzzle images</small></span><b>→</b></a><a href="#verify" class="quick-item"><span class="quick-icon blue">⌕</span><span><strong>Verify identity</strong><small>Check an image against registered animals</small></span><b>→</b></a><a href="#animals" class="quick-item"><span class="quick-icon lilac">◉</span><span><strong>Browse registry</strong><small>Review animal records</small></span><b>→</b></a></article>
+
+      <div class="top-right">
+        <label class="global-search">
+          <span aria-hidden="true"><svg class="search-icon" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></svg></span>
+        <input id="global-search" type="search" placeholder="Search by name, ear tag, or Muzzle ID…" aria-label="Search records">
+        </label>
+        <span class="env-pill"><i class="env-dot"></i> Secure Biometric Enclave</span>
+        <a href="#register" class="button primary small">＋ Register Cattle</a>
+        <button id="logout-button" class="text-button" type="button">Sign out</button>
       </div>
-      <article class="panel table-panel route-hidden" id="animals" data-view="animals"><div class="panel-heading"><div><h2>Animal database</h2><p id="registry-summary">Records in this organization</p></div><a href="#register" class="button secondary">＋ Add animal</a></div><div class="table-toolbar"><label>Filter records <input id="animal-filter" type="search" placeholder="Name, ear tag, breed or ID"></label><label>Sort by <select id="animal-sort"><option value="created_at">Recently added</option><option value="name">Name</option><option value="ear_tag">Ear tag</option></select></label></div><div class="table-wrap"><table><thead><tr><th>ANIMAL</th><th>EAR TAG</th><th>BREED</th><th>IMAGES</th><th>PROFILE STATUS</th><th></th></tr></thead><tbody id="animal-rows"><tr><td colspan="6" class="table-empty">Loading registry…</td></tr></tbody></table></div><div class="table-footer"><span id="page-count">—</span><div><button id="previous-page" class="button secondary" type="button">← Previous</button><button id="next-page" class="button secondary" type="button">Next →</button></div></div></article>
-      <div class="forms-grid route-hidden" data-view="register verify">
-        <article class="panel form-panel route-hidden" id="register" data-view="register"><div class="panel-heading"><div><h2>Register an animal</h2><p>Record details and add muzzle images</p></div><span class="step">01 / 01</span></div><form id="register-form"><div class="form-row"><label>Animal name<input name="name" maxlength="120" placeholder="e.g. Lakshmi"></label><label>Ear tag<input name="ear_tag" maxlength="120" placeholder="e.g. IN-4821"></label></div><div class="form-row"><label>Breed<input name="breed" maxlength="120" placeholder="e.g. Gir"></label><label>Sex<select name="sex"><option value="">Select</option><option>Female</option><option>Male</option></select></label></div><label>Date of birth<input name="date_of_birth" type="date"></label><label class="upload-box" id="register-dropzone"><input id="register-files" name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple required><span class="upload-icon">↑</span><strong>Choose or drop muzzle images</strong><small>JPEG, PNG or WebP · up to 8 images · 12 MB each</small></label><div id="image-previews" class="image-previews" aria-live="polite"></div><p class="form-note">Images are checked for readability. Record persistence is confirmed separately from biometric profile creation.</p><button class="button primary full" type="submit">Save animal record <span>→</span></button><div class="form-result" id="register-result" role="status" aria-live="polite"></div></form></article>
-        <article class="panel form-panel route-hidden" id="verify" data-view="verify"><div class="panel-heading"><div><h2>Identify an animal</h2><p>Search the registered biometric gallery</p></div><span class="step">01 / 01</span></div><form id="verify-form"><label class="upload-box verify-upload"><input name="image" type="file" accept="image/jpeg,image/png,image/webp" required><span class="upload-icon">⌕</span><strong>Upload a cattle muzzle image</strong><small>JPEG, PNG or WebP · up to 12 MB</small></label><div class="requirements"><span>✓ Clear, front-facing muzzle</span><span>✓ Good lighting and focus</span><span>✓ No muzzle obstruction</span></div><button class="button primary full" type="submit">Check identity <span>→</span></button><div class="form-result" id="verify-result" role="status" aria-live="polite"></div><div class="locked"><span>▣</span><div><strong>Verification currently unavailable</strong><small>Requires trained model, indexed gallery and validated decision thresholds.</small></div></div></form></article>
+    </header>
+
+    <!-- Page Content Container -->
+    <section class="content">
+      <!-- 1. Dashboard View -->
+      <div data-view="overview">
+        <div class="status-banner" id="dashboard-status-banner">
+          <span class="status-icon">i</span>
+          <div>
+            <strong id="status-title">Biometric engine is loading...</strong>
+            <p id="status-description">Checking model weights, FAISS gallery index, and encryption status.</p>
+          </div>
+          <span class="status-tag" id="status-tag">CHECKING</span>
+        </div>
+
+        <div class="metrics">
+          <article class="metric">
+            <div class="metric-top">
+              <span>Total Registered Cattle</span>
+              <span class="metric-icon green" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7 4 4m13 3 3-3M6 10c0-2 2.2-3.5 6-3.5s6 1.5 6 3.5v6a6 6 0 0 1-12 0z"/><path d="M9 13h.01M15 13h.01M10 17c1.2.8 2.8.8 4 0"/></svg></span>
+            </div>
+            <strong id="animal-count">—</strong>
+            <p id="animal-profile-summary">Biometric profiles <b>Checking…</b></p>
+          </article>
+
+          <article class="metric">
+            <div class="metric-top">
+              <span>Verifications Today</span>
+              <span class="metric-icon blue" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3m-8 0H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="11" r="3"/></svg></span>
+            </div>
+            <strong id="verification-count-today">—</strong>
+            <p id="verification-summary">30-day checks <b>—</b></p>
+          </article>
+
+          <article class="metric">
+            <div class="metric-top">
+              <span>Active Insurance</span>
+              <span class="metric-icon green" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 20 6v5c0 5-3.3 8.2-8 10-4.7-1.8-8-5-8-10V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
+            </div>
+            <strong id="active-insurance-kpi">—</strong>
+            <p id="insurance-coverage-kpi">Active cover <b>—</b><br><small>Currency is not configured</small></p>
+          </article>
+
+          <article class="metric">
+            <div class="metric-top">
+              <span>Open Review Alerts</span>
+              <span class="metric-icon amber" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 21 19H3z"/><path d="M12 9v4m0 3h.01"/></svg></span>
+            </div>
+            <strong id="open-alert-count">—</strong>
+            <p>Requires operator review</p>
+          </article>
+        </div>
+
+        <div class="grid-main">
+          <article class="panel activity">
+            <div class="panel-heading">
+              <div>
+                <h2>Recent Operational Activity</h2>
+                <p>Latest cattle registrations and biometric verifications</p>
+              </div>
+              <a href="#history">View all history →</a>
+            </div>
+            <div id="recent" class="empty-state">
+              <span class="empty-mark">◷</span>
+              <strong>No activity yet</strong>
+              <p>New cattle registrations and verification checks will appear here.</p>
+            </div>
+          </article>
+
+          <article class="panel quick">
+            <div class="panel-heading">
+              <div>
+                <h2>Quick Workflows</h2>
+                <p>Common field operations</p>
+              </div>
+            </div>
+            <a href="#register" class="quick-item">
+              <span class="quick-icon green" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+              <span><strong>Register cattle</strong><small>Add an animal record and encrypted reference images</small></span>
+              <b>→</b>
+            </a>
+            <a href="#verify" class="quick-item">
+              <span class="quick-icon blue" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3m-8 0H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="11" r="3"/></svg></span>
+              <span><strong>Verify Identity</strong><small>Match muzzle photo against enrolled herd</small></span>
+              <b>→</b>
+            </a>
+            <a href="#animals" class="quick-item">
+              <span class="quick-icon amber" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7 4 4m13 3 3-3M6 10c0-2 2.2-3.5 6-3.5s6 1.5 6 3.5v6a6 6 0 0 1-12 0z"/><path d="M9 13h.01M15 13h.01"/></svg></span>
+              <span><strong>Browse registry</strong><small>Find cattle by ear tag or Muzzle ID</small></span>
+              <b>→</b>
+            </a>
+            <a href="#insurance" class="quick-item">
+              <span class="quick-icon green" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 20 6v5c0 5-3.3 8.2-8 10-4.7-1.8-8-5-8-10V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
+              <span><strong>Insurance Register</strong><small>Manage underwriting coverage & policy status</small></span>
+              <b>→</b>
+            </a>
+          </article>
+        </div>
       </div>
-      <article class="panel history-panel route-hidden" id="history" data-view="history"><div class="panel-heading"><div><h2>Verification history</h2><p>Audit trail for recent identity checks</p></div></div><div id="history-list" class="empty-state compact"><span class="empty-mark">◷</span><strong>No verification history</strong><p>Verification events will be listed here when the biometric engine is active.</p></div></article>
-      <article class="panel detail-panel route-hidden" id="animal-detail" data-view="details"><div id="animal-detail-content" class="empty-state compact">Loading animal record…</div></article>
-      <article class="panel route-hidden" id="insurance" data-view="insurance"><div class="panel-heading"><div><h2>Insurance policy register</h2><p>Operator-maintained policy metadata only; MuzzleID makes no eligibility or claim decisions.</p></div></div><form id="insurance-form"><div class="form-row"><label>Animal<select id="insurance-animal" name="animal_id" required><option value="">Choose animal</option></select></label><label>Provider<input name="provider" maxlength="120" required></label></div><div class="form-row"><label>Policy number<input name="policy_number" maxlength="120" required></label><label>Coverage amount<input name="coverage_amount" type="number" min="0" step="0.01" required></label></div><div class="form-row"><label>Start date<input name="start_date" type="date" required></label><label>End date<input name="end_date" type="date" required></label></div><label>Notes<textarea name="notes" maxlength="2000" rows="3"></textarea></label><button class="button primary" type="submit">Save policy</button><p id="insurance-result" class="form-result" role="status"></p></form><div id="insurance-list" class="table-wrap"></div></article>
-      <article class="panel route-hidden" id="alerts" data-view="alerts"><div class="panel-heading"><div><h2>Operational review alerts</h2><p>Duplicate ear tags and verification results that need a person’s review.</p></div><select id="alert-filter" aria-label="Filter alerts"><option value="open">Open</option><option value="all">All</option><option value="resolved">Resolved</option></select></div><div id="alerts-list" class="empty-state compact">Loading alerts…</div></article>
-      <article class="panel route-hidden" id="analytics" data-view="analytics"><div class="panel-heading"><div><h2>Operational analytics</h2><p>Aggregates from saved registry, policy and verification records.</p></div></div><div id="analytics-content" class="empty-state compact">Loading analytics…</div></article>
-      <article class="panel route-hidden" id="reports" data-view="reports"><div class="panel-heading"><div><h2>Data exports</h2><p>CSV exports contain operator-entered records; verify handling before sharing.</p></div></div><div class="quick"><a class="quick-item" href="/api/reports/animals.csv"><span class="quick-icon green">↓</span><span><strong>Animal registry</strong><small>Metadata and biometric profile status</small></span><b>Download</b></a><a class="quick-item" href="/api/reports/verifications.csv"><span class="quick-icon blue">↓</span><span><strong>Verification history</strong><small>Decision outcomes and timestamps</small></span><b>Download</b></a></div></article>
-      <article class="panel route-hidden" id="settings" data-view="settings"><div class="panel-heading"><div><h2>System and security settings</h2><p>Read-only configuration status for the single operator instance.</p></div></div><div id="settings-content" class="empty-state compact">Loading settings…</div></article>
-      <article class="roadmap" id="planned" data-view="overview"><div><p class="eyebrow">SYSTEM SCOPE</p><h2>Operational tools<br>with clear limits.</h2><p>Policy records and alerts support operator workflows. Biometric decisions remain research-only.</p></div><div class="roadmap-items"><span><i>01</i> Animal records <b>Available</b></span><span><i>02</i> Prototype identification <b>Model gated</b></span><span><i>03</i> Policy register and alerts <b>Available</b></span><span><i>04</i> Muzzle detection and field validation <b>Required before release</b></span></div></article>
-      <footer data-view="overview animals register verify history details planned landing system"><span>© 2026 MuzzleID</span><span>Prototype · Not validated for insurance decisions</span><a href="/docs" target="_blank">API documentation ↗</a></footer>
+
+      <!-- 2. Animal Registry View -->
+      <article class="panel table-panel route-hidden" id="animals" data-view="animals">
+        <div class="panel-heading">
+          <div>
+            <h2>Cattle Registry</h2>
+            <p id="registry-summary">Enrolled animals in this organization</p>
+          </div>
+          <a href="#register" class="button primary">＋ Add Cattle</a>
+        </div>
+
+        <div class="table-toolbar">
+          <label>
+            Search
+            <input id="animal-filter" type="search" placeholder="Search by name, ear tag, breed, or Muzzle ID">
+          </label>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <label>
+              Status
+              <select id="animal-status-filter">
+                <option value="all">All statuses</option>
+                <option value="prototype_ready">Ready / Indexed</option>
+                <option value="pending_model">Pending Model</option>
+                <option value="reindex_required">Reindex Required</option>
+                <option value="stale_model">Stale Model</option>
+                <option value="storage_error">Storage Alert</option>
+              </select>
+            </label>
+            <label>
+              Sort by
+              <select id="animal-sort">
+                <option value="created_at">Recently added</option>
+                <option value="name">Animal Name</option>
+                <option value="ear_tag">Ear Tag</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>CATTLE</th>
+                <th>MUZZLE ID</th>
+                <th>EAR TAG</th>
+                <th>BREED</th>
+                <th>IMAGES</th>
+                <th>BIOMETRIC STATUS</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="animal-rows">
+              <tr><td colspan="7" class="table-empty">Loading cattle registry…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="table-footer">
+          <span id="page-count">—</span>
+          <div>
+            <button id="previous-page" class="button secondary" type="button">← Previous</button>
+            <button id="next-page" class="button secondary" type="button">Next →</button>
+          </div>
+        </div>
+      </article>
+
+      <!-- 3. Register Cattle View -->
+      <article class="panel form-panel route-hidden" id="register" data-view="register">
+        <div class="panel-heading">
+          <div>
+            <h2>Register Cattle Biometrics</h2>
+            <p>Save animal details and encrypted reference images to create a persistent Muzzle ID</p>
+          </div>
+          <span class="tag tag-active">● SECURE ENROLLMENT</span>
+        </div>
+
+        <form id="register-form">
+          <div class="form-row">
+            <label>
+              Animal name
+              <input name="name" maxlength="120" placeholder="e.g. Lakshmi" required>
+            </label>
+            <label>
+              Ear tag identifier
+              <input name="ear_tag" maxlength="120" placeholder="e.g. IN-4821">
+            </label>
+          </div>
+
+          <div class="form-row">
+            <label>
+              Breed
+              <input name="breed" maxlength="120" placeholder="e.g. Gir / Sahiwal">
+            </label>
+            <label>
+              Sex
+              <select name="sex">
+                <option value="">Select sex</option>
+                <option value="Female">Female</option>
+                <option value="Male">Male</option>
+              </select>
+            </label>
+          </div>
+
+          <label>
+            Date of birth
+            <input name="date_of_birth" type="date">
+          </label>
+
+          <label class="upload-box" id="register-dropzone">
+            <input id="register-files" name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple required>
+            <span class="upload-icon">↑</span>
+            <strong>Choose or drop reference muzzle images</strong>
+            <small>JPEG, PNG, or WebP · 1 to 8 images · up to 12 MB each</small>
+          </label>
+
+          <div id="image-previews" class="image-previews" aria-live="polite"></div>
+
+          <p class="form-note">
+            Reference images and biometric embeddings are encrypted at rest. The persistent Muzzle ID is a keyed pseudonymous identifier; it is separate from internal record IDs and biometric vectors.
+          </p>
+
+          <button class="button primary full" type="submit">Save animal record →</button>
+          <div class="form-result" id="register-result" role="status" aria-live="polite"></div>
+        </form>
+
+        <!-- Registration Confirmation Card -->
+        <div id="register-confirmation" style="display:none; margin-top:20px;"></div>
+      </article>
+
+      <!-- 4. Verify Identity View -->
+      <article class="panel form-panel route-hidden" id="verify" data-view="verify">
+        <div class="panel-heading">
+          <div>
+            <h2>Biometric Identity Verification</h2>
+            <p>Match query muzzle photo against registered cattle gallery in the encrypted FAISS index</p>
+          </div>
+          <span class="tag tag-active">● 512D RESNET-50 MATCHING</span>
+        </div>
+
+        <form id="verify-form">
+          <label class="upload-box verify-upload" id="verify-dropzone">
+            <input id="verify-file" name="image" type="file" accept="image/jpeg,image/png,image/webp" required>
+            <span class="upload-icon">⌕</span>
+            <strong>Select or drag-and-drop a query muzzle photo</strong>
+            <small>JPEG, PNG, or WebP · up to 12 MB · Sharp, well-lit front-facing muzzle</small>
+          </label>
+
+          <div id="verify-preview-wrap" style="display:none; margin-bottom:14px; text-align:center;">
+            <img id="verify-preview-img" style="max-height:200px; border-radius:var(--radius-md); border:1px solid var(--border-subtle); object-fit:contain;" alt="Query preview">
+          </div>
+
+          <div class="requirements">
+            <span>✓ Clear, front-facing muzzle image</span>
+            <span>✓ Good daylight or direct lighting without harsh glare</span>
+            <span>✓ Unobstructed muzzle ridge patterns without halters or dirt obscuring ridges</span>
+          </div>
+
+          <div class="locked" hidden>
+            <span>▣</span>
+            <div>
+              <strong>Biometric Verification Unavailable</strong>
+              <small>Trained ResNet-50 checkpoint, matching calibration, and FAISS gallery are required.</small>
+            </div>
+          </div>
+
+          <button class="button primary full" type="submit">Verify Cattle Identity Now →</button>
+          <div class="form-result" id="verify-result" role="status" aria-live="polite"></div>
+        </form>
+
+        <!-- Rich Verification Results Dossier -->
+        <div id="verify-dossier" style="display:none;"></div>
+      </article>
+
+      <!-- 5. Verification History View -->
+      <article class="panel table-panel route-hidden" id="history" data-view="history">
+        <div class="panel-heading">
+          <div>
+            <h2>Biometric Verification History</h2>
+            <p>Audit trail of all identity checks with similarity scores and calibrated decisions</p>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <select id="history-filter" aria-label="Filter history by decision">
+              <option value="all">All decisions</option>
+              <option value="VERIFIED">VERIFIED</option>
+              <option value="REVIEW">REVIEW</option>
+              <option value="UNKNOWN">UNKNOWN</option>
+            </select>
+            <a href="/api/reports/verifications.csv" class="button secondary small">Export CSV</a>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>DECISION</th>
+                <th>MATCHED ANIMAL</th>
+                <th>MUZZLE ID</th>
+                <th>SIMILARITY</th>
+                <th>REASON / AUDIT NOTE</th>
+                <th>TIMESTAMP</th>
+              </tr>
+            </thead>
+            <tbody id="history-rows">
+              <tr><td colspan="6" class="table-empty">Loading verification audit logs…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <!-- 6. Animal Dossier & Details View -->
+      <article class="panel detail-panel route-hidden" id="animal-detail" data-view="details">
+        <div id="animal-detail-content" class="empty-state compact">Loading cattle record…</div>
+      </article>
+
+      <!-- 7. Insurance Policies View -->
+      <article class="panel route-hidden" id="insurance" data-view="insurance">
+        <div class="panel-heading">
+          <div>
+            <h2>Insurance Policy Register</h2>
+            <p>Operator-maintained underwriting and coverage metadata linked to cattle biometric records</p>
+          </div>
+          <a href="/api/reports/insurance.csv" class="button secondary small">Export CSV</a>
+        </div>
+
+        <!-- Insurance KPIs -->
+        <div class="metrics" style="margin-bottom:20px;">
+          <div class="metric">
+            <span class="metric-top">Active Policies</span>
+            <strong id="insurance-active-count">0</strong>
+            <p>Current coverage</p>
+          </div>
+          <div class="metric">
+            <span class="metric-top">Total Insured Value</span>
+            <strong id="insurance-total-value">—</strong>
+            <p>Active portfolio · currency unspecified</p>
+          </div>
+          <div class="metric">
+            <span class="metric-top">Claims Reported</span>
+            <strong id="insurance-claims-count">0</strong>
+            <p>Flagged policies</p>
+          </div>
+          <div class="metric">
+            <span class="metric-top">Expired / Cancelled</span>
+            <strong id="insurance-inactive-count">0</strong>
+            <p>Historical records</p>
+          </div>
+        </div>
+
+        <!-- Policy Form -->
+        <form id="insurance-form" class="panel" style="margin-bottom:24px; background:var(--bg-canvas);">
+          <h3 style="margin-top:0; font-size:14px; font-weight:700;">＋ Add Insurance Policy</h3>
+          <div class="form-row">
+            <label>
+              Cattle record
+              <select id="insurance-animal" name="animal_id" required>
+                <option value="">Choose registered cattle</option>
+              </select>
+            </label>
+            <label>
+              Insurance provider
+              <input name="provider" maxlength="120" placeholder="e.g. AgriAssure National" required>
+            </label>
+          </div>
+
+          <div class="form-row">
+            <label>
+              Policy number
+              <input name="policy_number" maxlength="120" placeholder="e.g. POL-84920" required>
+            </label>
+            <label>
+              Coverage amount
+              <input name="coverage_amount" type="number" min="0" step="0.01" placeholder="e.g. 25000.00" required>
+              <small>Currency is not stored in this prototype.</small>
+            </label>
+          </div>
+
+          <div class="form-row">
+            <label>
+              Start date
+              <input name="start_date" type="date" required>
+            </label>
+            <label>
+              End date
+              <input name="end_date" type="date" required>
+            </label>
+          </div>
+
+          <label>
+            Underwriting notes
+            <textarea name="notes" maxlength="2000" rows="2" placeholder="Policy underwriting terms, inspection notes, coverage scope..."></textarea>
+          </label>
+
+          <button class="button primary" type="submit">Save Policy Record</button>
+          <div id="insurance-result" class="form-result" role="status"></div>
+        </form>
+
+        <!-- Policies Table -->
+        <div class="table-toolbar">
+          <label>
+            Filter by status
+            <select id="insurance-filter">
+              <option value="all">All policies</option>
+              <option value="active">Active</option>
+              <option value="pending">Pending</option>
+              <option value="claim_reported">Claim Reported</option>
+              <option value="expired">Expired</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="insurance-list" class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>CATTLE</th>
+                <th>MUZZLE ID</th>
+                <th>PROVIDER & POLICY #</th>
+                <th>COVERAGE</th>
+                <th>EFFECTIVE PERIOD</th>
+                <th>STATUS</th>
+                <th>ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody id="insurance-rows">
+              <tr><td colspan="7" class="table-empty">Loading policy records…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <!-- 8. Operational Review Alerts View -->
+      <article class="panel route-hidden" id="alerts" data-view="alerts">
+        <div class="panel-heading">
+          <div>
+            <h2>Operational Review Alerts</h2>
+            <p>Duplicate ear tags, low-confidence biometric verification reviews, and anomaly investigations</p>
+          </div>
+          <label style="display:flex; align-items:center; gap:8px;">
+            Filter
+            <select id="alert-filter" aria-label="Filter alerts">
+              <option value="open">Open alerts</option>
+              <option value="all">All alerts</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="alerts-list" class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>SEVERITY</th>
+                <th>ALERT DETAILS</th>
+                <th>CATEGORY</th>
+                <th>LINKED CATTLE / MUZZLE ID</th>
+                <th>CREATED</th>
+                <th>ACTION</th>
+              </tr>
+            </thead>
+            <tbody id="alerts-rows">
+              <tr><td colspan="6" class="table-empty">Loading operational alerts…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <!-- 9. Analytics View -->
+      <article class="panel route-hidden" id="analytics" data-view="analytics">
+        <div class="panel-heading">
+          <div>
+            <h2>Operational Biometric & Underwriting Analytics</h2>
+            <p>Telemetry and metrics derived from persisted cattle records, insurance policies, and identity checks</p>
+          </div>
+          <button class="button secondary small" id="refresh-analytics-btn" type="button">↻ Refresh Analytics</button>
+        </div>
+        <div id="analytics-content" class="empty-state compact">Loading analytics…</div>
+      </article>
+
+      <!-- 10. Data Reports View -->
+      <article class="panel route-hidden" id="reports" data-view="reports">
+        <div class="panel-heading">
+          <div>
+            <h2>Data Exports & Reports</h2>
+            <p>Download spreadsheet-safe CSV exports with formula injection safeguards</p>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px;">
+          <div class="metric" style="padding:22px;">
+            <div class="metric-top">
+              <span>Cattle Registry Export</span>
+              <span class="metric-icon green">↓</span>
+            </div>
+            <strong style="font-size:18px; margin:14px 0 6px;">Animal Registry CSV</strong>
+            <p style="margin-bottom:16px;">Includes persistent pseudonymous Muzzle IDs, tags, breeds, sex, DOB, and biometric profile status.</p>
+            <a class="button primary small" href="/api/reports/animals.csv" download>Download Registry CSV →</a>
+          </div>
+
+          <div class="metric" style="padding:22px;">
+            <div class="metric-top">
+              <span>Verification Audit Export</span>
+              <span class="metric-icon blue">↓</span>
+            </div>
+            <strong style="font-size:18px; margin:14px 0 6px;">Verification History CSV</strong>
+            <p style="margin-bottom:16px;">Audit trail with timestamps, similarity scores, decisions, and matched Muzzle IDs.</p>
+            <a class="button primary small" href="/api/reports/verifications.csv" download>Download History CSV →</a>
+          </div>
+
+          <div class="metric" style="padding:22px;">
+            <div class="metric-top">
+              <span>Underwriting Coverage Export</span>
+              <span class="metric-icon amber">↓</span>
+            </div>
+            <strong style="font-size:18px; margin:14px 0 6px;">Insurance Policies CSV</strong>
+            <p style="margin-bottom:16px;">Full policy register with coverage amounts, providers, policy numbers, dates, and animal IDs.</p>
+            <a class="button primary small" href="/api/reports/insurance.csv" download>Download Policies CSV →</a>
+          </div>
+        </div>
+      </article>
+
+      <!-- 11. System & Pipeline Status View -->
+      <article class="panel route-hidden" id="system" data-view="system">
+        <div class="panel-heading">
+          <div>
+            <h2>System & Biometric Pipeline Telemetry</h2>
+            <p>Live health metrics for the ML model, FAISS gallery index, cryptographic enclave, and database</p>
+          </div>
+          <button class="button secondary small" id="refresh-system-btn" type="button">↻ Run Health Check</button>
+        </div>
+        <div id="system-content" class="empty-state compact">Checking system pipeline…</div>
+      </article>
+
+      <!-- 12. Settings View -->
+      <article class="panel route-hidden" id="settings" data-view="settings">
+        <div class="panel-heading">
+          <div>
+            <h2>System & Security Settings</h2>
+            <p>Configuration status for this single-operator MuzzleID prototype</p>
+          </div>
+        </div>
+        <div id="settings-content" class="empty-state compact">Loading settings…</div>
+      </article>
+
+      <section class="panel not-found route-hidden" data-view="not-found" aria-labelledby="not-found-title">
+        <p class="eyebrow">404 · ROUTE NOT FOUND</p>
+        <h2 id="not-found-title">This workspace page does not exist</h2>
+        <p>Check the address or return to the dashboard.</p>
+        <a class="button primary" href="#overview">Go to dashboard</a>
+      </section>
+
+      <!-- Footer Notice -->
+      <footer>
+        <span>© 2026 MuzzleID · Secured Livestock Biometrics</span>
+        <span>Research prototype · Not validated for automatic claim adjudications without human confirmation</span>
+        <a href="/docs" target="_blank" rel="noopener">Interactive API Documentation ↗</a>
+      </footer>
     </section>
   </main>
-  <script src="/assets/api.js" defer></script><script src="/assets/app.js" defer></script>
-</body></html>
+
+  <!-- Non-intrusive Toast Container -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- Custom Confirmation Dialog Modal -->
+  <div id="confirm-modal" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h3 id="confirm-modal-title">Confirm Action</h3>
+      <p id="confirm-modal-message">Are you sure you want to proceed?</p>
+      <div class="modal-actions">
+        <button type="button" class="button secondary" id="confirm-modal-cancel">Cancel</button>
+        <button type="button" class="button danger" id="confirm-modal-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/assets/api.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
