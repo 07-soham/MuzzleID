@@ -11,18 +11,48 @@
   <link rel="stylesheet" href="/assets/mobile-fixes.css">
 </head>
 <body>
-  <!-- Operator Authentication Gate -->
+  <!-- Shared role selection and sign-in -->
   <section id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
-    <form id="login-form" class="auth-card">
-      <div class="brand-mark">M</div>
-      <p class="eyebrow">ENTERPRISE BIOMETRIC ACCESS</p>
-      <h1 id="auth-title">Sign in to MuzzleID</h1>
-      <p>Enter the operator password configured in the server's private environment.</p>
+    <div class="auth-brand"><span class="brand-mark">M</span><span>Muzzle<strong>ID</strong></span></div>
+    <section id="role-selection" class="auth-card role-card">
+      <p class="eyebrow">BIOMETRIC IDENTITY · LIVESTOCK OPERATIONS</p>
+      <h1 id="auth-title">Welcome to MuzzleID</h1>
+      <p>Choose your workspace to continue.</p>
+      <div class="role-options">
+        <article class="role-option"><span class="role-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg></span><h2>Insurance company / Admin</h2><p>Manage cattle identity, verification, insurance operations, and review workflows.</p><button id="choose-admin" class="button primary full" type="button">Admin Login</button></article>
+        <article class="role-option"><span class="role-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span><h2>Farmer / Customer</h2><p>Register your cattle, check identity, and view your insurance information.</p><button id="choose-farmer" class="button secondary full" type="button">Farmer Login / Sign Up</button></article>
+      </div>
+    </section>
+    <form id="login-form" class="auth-card auth-subpage" hidden>
+      <button id="back-role-from-admin" class="auth-back" type="button">← Choose workspace</button>
+      <div class="brand-mark">M</div><p class="eyebrow">ADMINISTRATOR ACCESS</p><h1>Admin Login</h1>
+      <p>Use the operator password configured by your administrator.</p>
       <label for="operator-password">Operator password</label>
-      <input id="operator-password" name="password" type="password" autocomplete="current-password" minlength="12" placeholder="••••••••••••" required>
+      <input id="operator-password" name="password" type="password" autocomplete="current-password" minlength="12" placeholder="Enter operator password" required>
       <button class="button primary full" type="submit">Sign in to console →</button>
       <div id="login-result" class="form-result" role="status" aria-live="polite"></div>
-      <small>Secured single-operator biometric console. Keep operator credentials confidential.</small>
+      <small>Administrator privileges are validated by the server.</small>
+    </form>
+    <form id="farmer-login-form" class="auth-card auth-subpage" hidden>
+      <button id="back-role-from-farmer-login" class="auth-back" type="button">← Choose workspace</button>
+      <div class="brand-mark">M</div><p class="eyebrow">FARMER WORKSPACE</p><h1>Farmer Login</h1>
+      <label for="farmer-identifier">Mobile number or email</label><input id="farmer-identifier" name="identifier" autocomplete="username" required>
+      <label for="farmer-login-password">Password</label><div class="password-field"><input id="farmer-login-password" name="password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" data-toggle-password="farmer-login-password" aria-label="Show password">Show</button></div>
+      <button class="button primary full" type="submit">Sign in</button><div id="farmer-login-result" class="form-result" role="status" aria-live="polite"></div>
+      <p class="auth-switch">New to MuzzleID? <button id="show-farmer-signup" class="link-button" type="button">Create a farmer account</button></p>
+      <small>Accounts are not phone or email verified; verification services are not configured.</small>
+    </form>
+    <form id="farmer-signup-form" class="auth-card auth-subpage" hidden>
+      <button id="back-role-from-farmer-signup" class="auth-back" type="button">← Choose workspace</button>
+      <div class="brand-mark">M</div><p class="eyebrow">FARMER WORKSPACE</p><h1>Create your account</h1>
+      <label for="farmer-name">Full name</label><input id="farmer-name" name="full_name" autocomplete="name" maxlength="120" required>
+      <label for="farmer-mobile">Mobile number</label><input id="farmer-mobile" name="mobile" type="tel" autocomplete="tel" minlength="8" maxlength="32" required>
+      <label for="farmer-email">Email <span class="optional-label">Optional</span></label><input id="farmer-email" name="email" type="email" autocomplete="email" maxlength="254">
+      <label for="farmer-signup-password">Password <span class="optional-label">At least 12 characters</span></label><div class="password-field"><input id="farmer-signup-password" name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required><button type="button" class="password-toggle" data-toggle-password="farmer-signup-password" aria-label="Show password">Show</button></div>
+      <label for="farmer-password-confirm">Confirm password</label><input id="farmer-password-confirm" name="password_confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>
+      <button class="button primary full" type="submit">Create account</button><div id="farmer-signup-result" class="form-result" role="status" aria-live="polite"></div>
+      <p class="auth-switch">Already have an account? <button id="show-farmer-login" class="link-button" type="button">Sign in</button></p>
+      <small>Your password is stored as a one-way scrypt hash. Email and phone verification are not available.</small>
     </form>
   </section>
 
@@ -59,6 +89,7 @@
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 21 19H3z"/><path d="M12 9v4m0 3h.01"/></svg></span> <span>Review alerts</span>
         <span id="nav-alert-badge" class="nav-badge" style="display:none;">0</span>
       </a>
+      <a class="nav-item" href="#farmer-requests"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16l-4-2-3 2-3-2-4 2z"/><path d="M8 9h8M8 13h6"/></svg></span> <span>Farmer requests</span></a>
       <a class="nav-item" href="#analytics"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19V5m0 14h17"/><path d="m7 15 4-4 3 2 5-6"/></svg></span> <span>Analytics</span></a>
       <a class="nav-item" href="#reports"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></svg></span> <span>Data exports</span></a>
       <a class="nav-item" href="#system"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h3l2-6 4 12 2-6h5"/><circle cx="12" cy="12" r="9"/></svg></span> <span>System status</span></a>
@@ -639,6 +670,11 @@
         <div id="settings-content" class="empty-state compact">Loading settings…</div>
       </article>
 
+      <article class="panel table-panel route-hidden" id="farmer-requests" data-view="farmer-requests">
+        <div class="panel-heading"><div><h2>Farmer claims and requests</h2><p>Operator review queue for farmer-submitted requests</p></div><button class="button secondary small" id="refresh-admin-farmer-requests" type="button">Refresh</button></div>
+        <div class="table-wrap"><table><thead><tr><th>REFERENCE</th><th>FARMER</th><th>ANIMAL</th><th>TYPE / DETAILS</th><th>SUBMITTED</th><th>STATUS</th></tr></thead><tbody id="admin-farmer-requests"><tr><td colspan="6" class="table-empty">Open this page to load requests.</td></tr></tbody></table></div>
+      </article>
+
       <section class="panel not-found route-hidden" data-view="not-found" aria-labelledby="not-found-title">
         <p class="eyebrow">404 · ROUTE NOT FOUND</p>
         <h2 id="not-found-title">This workspace page does not exist</h2>
@@ -654,6 +690,40 @@
       </footer>
     </section>
   </main>
+
+  <!-- Farmer workspace uses the same tokens and components with a focused navigation. -->
+  <section id="farmer-shell" class="farmer-shell" hidden>
+    <aside class="farmer-sidebar">
+      <a class="brand farmer-brand" href="#farmer/dashboard"><span class="brand-mark">M</span><span class="brand-title"><span class="brand-name">Muzzle<span class="brand-light">ID</span></span><span class="brand-subtitle">FARMER WORKSPACE</span></span></a>
+      <nav aria-label="Farmer navigation">
+        <a class="nav-item" href="#farmer/dashboard" data-farmer-nav="dashboard">My dashboard</a>
+        <a class="nav-item" href="#farmer/animals" data-farmer-nav="animals">My cattle</a>
+        <a class="nav-item" href="#farmer/register" data-farmer-nav="register">Register cattle</a>
+        <a class="nav-item" href="#farmer/verify" data-farmer-nav="verify">Verify my cattle</a>
+        <a class="nav-item" href="#farmer/insurance" data-farmer-nav="insurance">My insurance</a>
+        <a class="nav-item" href="#farmer/claims" data-farmer-nav="claims">My claims & requests</a>
+        <a class="nav-item" href="#farmer/profile" data-farmer-nav="profile">My profile</a>
+      </nav>
+      <div class="farmer-side-note">Your animal records are private to your account.</div>
+    </aside>
+    <main class="farmer-main">
+      <header class="topbar farmer-topbar"><div class="breadcrumbs"><span class="crumb">My workspace</span><span class="slash">/</span><strong id="farmer-page-title" class="page-title-badge">My dashboard</strong></div><div class="top-right"><span id="farmer-greeting" class="farmer-greeting">Farmer</span><button id="farmer-logout" class="text-button" type="button">Sign out</button></div></header>
+      <section class="content farmer-content">
+        <section class="route-hidden" data-farmer-view="dashboard">
+          <div class="farmer-welcome"><p class="eyebrow">YOUR HERD AT A GLANCE</p><h1 id="farmer-welcome-name">Welcome</h1><p>Manage your cattle identity and review the insurance information linked to your records.</p></div>
+          <div class="metrics farmer-metrics"><article class="metric"><span>Total cattle</span><strong id="farmer-cattle-count">—</strong><a href="#farmer/animals">View your cattle →</a></article><article class="metric"><span>Insured cattle</span><strong id="farmer-insured-count">—</strong><a href="#farmer/insurance">View policies →</a></article><article class="metric"><span>Upcoming expirations</span><strong id="farmer-expiring-count">—</strong><a href="#farmer/insurance">Review dates →</a></article><article class="metric"><span>Open requests</span><strong id="farmer-open-requests">—</strong><a href="#farmer/claims">Track requests →</a></article></div>
+          <div class="grid-main"><article class="panel"><div class="panel-heading"><div><h2>Quick actions</h2><p>Common farmer tasks</p></div></div><div class="farmer-action-grid"><a class="button primary" href="#farmer/register">＋ Register cattle</a><a class="button secondary" href="#farmer/verify">Verify my cattle</a><a class="button secondary" href="#farmer/insurance">View insurance</a></div></article><article class="panel"><div class="panel-heading"><div><h2>Policy dates coming up</h2><p>Based on your saved policy records</p></div></div><div id="farmer-expiring-list" class="empty-state compact">Loading policy dates…</div></article></div>
+          <article class="panel"><div class="panel-heading"><div><h2>Recent verification activity</h2><p>Your identity checks</p></div><a href="#farmer/verify">Verify cattle →</a></div><div id="farmer-recent-history" class="empty-state compact">Loading activity…</div></article>
+        </section>
+        <section class="panel route-hidden" data-farmer-view="animals"><div class="panel-heading"><div><h2>My cattle</h2><p>Only cattle registered to your account are shown here.</p></div><a class="button primary" href="#farmer/register">＋ Register cattle</a></div><label class="farmer-search">Search my cattle<input id="farmer-animal-search" type="search" placeholder="Name, ear tag, breed, or Muzzle ID"></label><div id="farmer-animal-detail" hidden></div><div id="farmer-animal-list" class="table-wrap"><table><thead><tr><th>ANIMAL</th><th>MUZZLE ID</th><th>EAR TAG</th><th>BREED</th><th>BIOMETRIC STATUS</th><th></th></tr></thead><tbody id="farmer-animal-rows"><tr><td colspan="6" class="table-empty">Loading your cattle…</td></tr></tbody></table></div></section>
+        <section class="panel form-panel route-hidden" data-farmer-view="register"><div class="panel-heading"><div><h2>Register cattle</h2><p>Save your animal details and encrypted reference images.</p></div></div><form id="farmer-register-form"><div class="form-row"><label>Animal name<input name="name" maxlength="120" required></label><label>Ear tag identifier<input name="ear_tag" maxlength="120"></label></div><div class="form-row"><label>Breed<input name="breed" maxlength="120"></label><label>Sex<select name="sex"><option value="">Select sex</option><option>Female</option><option>Male</option></select></label></div><label>Date of birth<input name="date_of_birth" type="date"></label><label class="upload-box" id="farmer-register-dropzone"><input id="farmer-register-files" name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple required><span class="upload-icon" aria-hidden="true">↑</span><strong>Choose or drop reference muzzle images</strong><small>JPEG, PNG, or WebP · 1 to 8 images · up to 12 MB each</small></label><div id="farmer-image-previews" class="image-previews" aria-live="polite"></div><p class="form-note">Biometric matching is a research prototype and does not establish ownership or insurance eligibility.</p><button class="button primary full" type="submit">Save my animal</button><div id="farmer-register-result" class="form-result" role="status" aria-live="polite"></div><div id="farmer-register-confirmation"></div></form></section>
+        <section class="panel form-panel route-hidden" data-farmer-view="verify"><div class="panel-heading"><div><h2>Verify my cattle</h2><p>Compare an image only against profiles registered to your account.</p></div></div><form id="farmer-verify-form"><label class="upload-box" id="farmer-verify-dropzone"><input id="farmer-verify-file" name="image" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" required><span class="upload-icon" aria-hidden="true">⌕</span><strong>Choose or capture an image</strong><small>JPEG, PNG, or WebP · up to 12 MB</small></label><div id="farmer-verify-preview-wrap" class="verify-preview-wrap" hidden><img id="farmer-verify-preview" alt="Selected image preview"></div><p class="form-note">Results are prototype suggestions only. Confirm identity in person; they are not proof of ownership.</p><button class="button primary full" type="submit">Check identity</button><div id="farmer-verify-result" class="form-result" role="status" aria-live="polite"></div></form><h3>Your recent checks</h3><div id="farmer-history" class="empty-state compact">Loading verification activity…</div></section>
+        <section class="panel route-hidden" data-farmer-view="insurance"><div class="panel-heading"><div><h2>My insurance</h2><p>Policy metadata linked to your cattle. Registration does not create insurance coverage.</p></div></div><div id="farmer-insurance-list" class="table-wrap"><table><thead><tr><th>ANIMAL</th><th>INSURER</th><th>POLICY</th><th>COVERAGE</th><th>EFFECTIVE DATES</th><th>STATUS</th></tr></thead><tbody id="farmer-policy-rows"><tr><td colspan="6" class="table-empty">Loading your policies…</td></tr></tbody></table></div></section>
+        <section class="route-hidden" data-farmer-view="claims"><article class="panel form-panel"><div class="panel-heading"><div><h2>Submit a claim or request</h2><p>A claim request records your report; it is not a claim decision.</p></div></div><form id="farmer-request-form"><label>Request type<select name="kind" id="farmer-request-kind"><option value="support">General support request</option><option value="claim">Report an insurance claim</option></select></label><label>Related animal<select name="animal_id" id="farmer-request-animal"><option value="">No animal selected</option></select></label><label>Describe what happened<textarea name="description" minlength="10" maxlength="4000" rows="4" required></textarea></label><button class="button primary" type="submit">Submit request</button><div id="farmer-request-result" class="form-result" role="status" aria-live="polite"></div></form></article><article class="panel"><div class="panel-heading"><div><h2>My requests</h2><p>Submission references and status updates</p></div><button id="refresh-farmer-requests" class="button secondary small" type="button">Refresh</button></div><div class="table-wrap"><table><thead><tr><th>REFERENCE</th><th>TYPE</th><th>ANIMAL</th><th>DETAILS</th><th>SUBMITTED</th><th>STATUS</th></tr></thead><tbody id="farmer-request-rows"><tr><td colspan="6" class="table-empty">Loading requests…</td></tr></tbody></table></div></article></section>
+        <section class="panel form-panel route-hidden" data-farmer-view="profile"><div class="panel-heading"><div><h2>My profile</h2><p>Manage your contact information and sign-in password.</p></div></div><form id="farmer-profile-form"><label>Full name<input name="full_name" maxlength="120" required></label><label>Mobile number<input name="mobile" type="tel" maxlength="32" required></label><label>Email<input name="email" type="email" maxlength="254"></label><button class="button primary" type="submit">Save profile</button><div id="farmer-profile-result" class="form-result" role="status" aria-live="polite"></div></form><hr><form id="farmer-password-form"><h3>Change password</h3><label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label><label>New password<input name="new_password" type="password" autocomplete="new-password" minlength="12" required></label><button class="button secondary" type="submit">Change password</button><div id="farmer-password-result" class="form-result" role="status" aria-live="polite"></div></form><p class="form-note">Password recovery and email/mobile verification are not available because no delivery provider is configured.</p></section>
+      </section>
+    </main>
+  </section>
 
   <!-- Non-intrusive Toast Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>

@@ -5,6 +5,8 @@ from datetime import date, datetime, timedelta, timezone
 import csv
 from io import StringIO
 import hmac
+import base64
+import hashlib
 from hashlib import sha256
 from pathlib import Path
 import secrets
@@ -20,9 +22,11 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import select, func, or_, text, delete, update
+from sqlalchemy.exc import IntegrityError
 from src.config import ROOT, get_settings
-from src.database.models import Animal, AnimalImage, ImageEmbedding, RegistrationRequest, Verification, InsurancePolicy, OperationalAlert, make_session_factory
+from src.database.models import Animal, AnimalImage, ImageEmbedding, RegistrationRequest, Verification, InsurancePolicy, OperationalAlert, Farmer, FarmerRequest, FarmerRequestEvent, make_session_factory
 from src.inference.engine import embed_images, faiss_available, match_embedding, model_state
+from src.inference.decision import decide
 from src.inference.faiss_gallery import ensure_gallery_index
 from src.inference.quality import inspect_image
 from src.security.crypto import data_key_bytes, decrypt_bytes, encrypt_bytes, encrypted_muzzle_id
@@ -146,6 +150,42 @@ class AlertUpdate(BaseModel):
     status: Literal["open", "resolved"]
 
 
+class FarmerSignup(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    full_name: str = Field(min_length=2, max_length=120)
+    mobile: str = Field(min_length=8, max_length=32)
+    email: str | None = Field(default=None, max_length=254)
+    password: str = Field(min_length=12, max_length=128)
+
+
+class FarmerLogin(BaseModel):
+    identifier: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class FarmerProfileUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    full_name: str = Field(min_length=2, max_length=120)
+    mobile: str = Field(min_length=8, max_length=32)
+    email: str | None = Field(default=None, max_length=254)
+
+
+class FarmerPasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+
+
+class FarmerRequestCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    kind: Literal["claim", "support"]
+    animal_id: str | None = Field(default=None, max_length=36)
+    description: str = Field(min_length=10, max_length=4000)
+
+
+class FarmerRequestUpdate(BaseModel):
+    status: Literal["submitted", "under_review", "resolved", "declined"]
+
+
 class RequestBodyTooLarge(Exception):
     pass
 
@@ -161,7 +201,7 @@ class RequestBodyLimitMiddleware:
             return
         path = scope.get("path", "")
         max_image = get_settings()["max_upload_bytes"]
-        limit = 8 * 1024 if path == "/api/login" else max_image + 1024 * 1024 if path == "/api/verify" else get_settings()["max_registration_bytes"] + 1024 * 1024 if path == "/api/animals" else 1024 * 1024
+        limit = 8 * 1024 if path in {"/api/login", "/api/farmer/login"} else max_image + 1024 * 1024 if path in {"/api/verify", "/api/farmer/verify"} else get_settings()["max_registration_bytes"] + 1024 * 1024 if path in {"/api/animals", "/api/farmer/animals"} else 1024 * 1024
         length = 0
         response_started = False
 
@@ -197,7 +237,7 @@ async def security_headers(request: Request, call_next):
     content_length = request.headers.get("content-length")
     if content_length and content_length.isdigit():
         path = request.url.path
-        limit = 8 * 1024 if path == "/api/login" else get_settings()["max_upload_bytes"] + 1024 * 1024 if path == "/api/verify" else get_settings()["max_registration_bytes"] + 1024 * 1024 if path == "/api/animals" else 1024 * 1024
+        limit = 8 * 1024 if path in {"/api/login", "/api/farmer/login"} else get_settings()["max_upload_bytes"] + 1024 * 1024 if path in {"/api/verify", "/api/farmer/verify"} else get_settings()["max_registration_bytes"] + 1024 * 1024 if path in {"/api/animals", "/api/farmer/animals"} else 1024 * 1024
         if int(content_length) > limit:
             return Response("Request body is too large.", status_code=413)
     response = await call_next(request)
@@ -218,16 +258,95 @@ def _session_valid(token: str | None, secret: str) -> bool:
         return False
     payload, signature = token.rsplit(".", 1)
     try:
-        expires, nonce = payload.split(".", 1)
-        return int(expires) > int(time.time()) and len(nonce) >= 20 and hmac.compare_digest(signature, _session_signature(payload, secret))
+        if not hmac.compare_digest(signature, _session_signature(payload, secret)):
+            return False
+        if "|" not in payload and "." in payload:  # Existing administrator sessions remain valid.
+            expires, nonce = payload.split(".", 1)
+        else:
+            parts = payload.split("|")
+            if len(parts) == 3 and parts[0] == "admin":
+                _, expires, nonce = parts
+            elif len(parts) in {4, 5} and parts[0] == "farmer":
+                if len(parts) == 5:
+                    _, farmer_id, version, expires, nonce = parts
+                    if int(version) < 0:
+                        return False
+                else:
+                    _, farmer_id, expires, nonce = parts
+                if not farmer_id:
+                    return False
+            else:
+                return False
+        return int(expires) > int(time.time()) and len(nonce) >= 20
     except (TypeError, ValueError):
         return False
 
 
 def require_session(request: Request):
     secret = get_settings().get("session_secret", "")
-    if len(secret) < 32 or not _session_valid(request.cookies.get(SESSION_COOKIE), secret):
+    token = request.cookies.get(SESSION_COOKIE)
+    if len(secret) < 32 or not _session_valid(token, secret):
         raise HTTPException(401, "Sign in to access MuzzleID records.")
+    payload = token.rsplit(".", 1)[0]
+    if "|" not in payload and "." in payload:
+        return {"role": "admin", "farmer_id": None}
+    parts = payload.split("|")
+    if parts[0] == "admin":
+        return {"role": "admin", "farmer_id": None}
+    version = int(parts[2]) if len(parts) == 5 else 0
+    with SessionFactory() as db:
+        account = db.get(Farmer, parts[1])
+        if account is None or account.session_version != version:
+            raise HTTPException(401, "Farmer session expired. Sign in again.")
+    return {"role": "farmer", "farmer_id": parts[1], "session_version": version}
+
+
+def require_admin(principal=Depends(require_session)):
+    if principal["role"] != "admin":
+        raise HTTPException(403, "Administrator access is required.")
+    return principal
+
+
+def require_farmer(principal=Depends(require_session)):
+    if principal["role"] != "farmer":
+        raise HTTPException(403, "Farmer access is required.")
+    return principal["farmer_id"]
+
+
+def _issue_session(response: Response, role: str, subject: str | None = None, version: int = 0):
+    cfg = get_settings()
+    expires = int(time.time()) + 8 * 60 * 60
+    nonce = secrets.token_urlsafe(24)
+    payload = f"farmer|{subject}|{version}|{expires}|{nonce}" if role == "farmer" else f"admin|{expires}|{nonce}"
+    token = f"{payload}.{_session_signature(payload, cfg['session_secret'])}"
+    response.set_cookie(SESSION_COOKIE, token, max_age=8 * 60 * 60, httponly=True, secure=cfg.get("cookie_secure", False), samesite="strict", path="/")
+
+
+def _normalize_mobile(value: str) -> str:
+    stripped = value.strip()
+    if not __import__("re").fullmatch(r"\+?[0-9][0-9 ()-]{6,30}", stripped):
+        raise HTTPException(422, "Enter a valid mobile number with country code if needed.")
+    digits = "".join(char for char in stripped if char.isdigit())
+    return ("+" if stripped.startswith("+") else "") + digits
+
+
+def _password_hash(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1, dklen=32)
+    return "scrypt$" + base64.urlsafe_b64encode(salt).decode("ascii") + "$" + base64.urlsafe_b64encode(digest).decode("ascii")
+
+
+def _password_matches(password: str, encoded: str) -> bool:
+    try:
+        algorithm, salt_text, digest_text = encoded.split("$", 2)
+        if algorithm != "scrypt":
+            return False
+        salt = base64.urlsafe_b64decode(salt_text.encode("ascii"))
+        expected = base64.urlsafe_b64decode(digest_text.encode("ascii"))
+        actual = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1, dklen=len(expected))
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
 
 
 def check_rate_limit(request: Request, route: str, limit: int, window_seconds: int):
@@ -285,7 +404,17 @@ def _current_profile_statuses(db):
 def session_status(request: Request):
     cfg = get_settings()
     configured = len(cfg.get("operator_password", "")) >= 12 and len(cfg.get("session_secret", "")) >= 32
-    return {"authenticated": configured and _session_valid(request.cookies.get(SESSION_COOKIE), cfg.get("session_secret", "")), "configured": configured}
+    secret_ready = len(cfg.get("session_secret", "")) >= 32
+    principal = require_session(request) if secret_ready and _session_valid(request.cookies.get(SESSION_COOKIE), cfg.get("session_secret", "")) else None
+    farmer = None
+    if principal and principal["role"] == "farmer":
+        with SessionFactory() as db:
+            account = db.get(Farmer, principal["farmer_id"])
+            if account:
+                farmer = {"id": account.id, "full_name": account.full_name, "mobile": account.mobile, "email": account.email}
+            else:
+                principal = None
+    return {"authenticated": principal is not None, "configured": configured, "role": principal["role"] if principal else None, "farmer": farmer}
 
 
 @app.post("/api/login")
@@ -298,17 +427,272 @@ def login(request: Request, response: Response, credentials: dict):
     submitted = credentials.get("password") if isinstance(credentials, dict) else None
     if not isinstance(submitted, str) or not hmac.compare_digest(submitted.encode(), password.encode()):
         raise HTTPException(401, "The operator password is incorrect.")
-    now = time.time()
-    payload = f"{int(now) + 8 * 60 * 60}.{secrets.token_urlsafe(24)}"
-    token = f"{payload}.{_session_signature(payload, secret)}"
-    response.set_cookie(SESSION_COOKIE, token, max_age=8 * 60 * 60, httponly=True, secure=cfg.get("cookie_secure", False), samesite="strict", path="/")
+    _issue_session(response, "admin")
     return {"authenticated": True}
 
 
-@app.post("/api/logout", dependencies=[Depends(require_session)])
-def logout(response: Response):
+@app.post("/api/farmer/signup", status_code=201)
+def farmer_signup(payload: FarmerSignup, request: Request, response: Response):
+    cfg = get_settings()
+    if len(cfg.get("session_secret", "")) < 32:
+        raise HTTPException(503, "Farmer accounts are unavailable until the session secret is configured.")
+    check_rate_limit(request, "farmer-signup", 5, 900)
+    mobile = _normalize_mobile(payload.mobile)
+    email = payload.email.lower().strip() if payload.email else None
+    if email and not __import__("re").fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(422, "Enter a valid email address or leave it blank.")
+    now = datetime.now(timezone.utc)
+    account = Farmer(id=str(uuid4()), full_name=payload.full_name, mobile=mobile, email=email, password_hash=_password_hash(payload.password), created_at=now)
+    try:
+        with SessionFactory.begin() as db:
+            db.add(account)
+            db.flush()
+    except IntegrityError as exc:
+        raise HTTPException(409, "An account already uses that mobile number or email address.") from exc
+    _issue_session(response, "farmer", account.id, account.session_version)
+    return {"authenticated": True, "role": "farmer", "farmer": {"id": account.id, "full_name": account.full_name, "mobile": account.mobile, "email": account.email}}
+
+
+@app.post("/api/farmer/login")
+def farmer_login(payload: FarmerLogin, request: Request, response: Response):
+    if len(get_settings().get("session_secret", "")) < 32:
+        raise HTTPException(503, "Farmer accounts are unavailable until the session secret is configured.")
+    check_rate_limit(request, "farmer-login", 8, 300)
+    identifier = payload.identifier.strip().lower()
+    with SessionFactory() as db:
+        if "@" in identifier:
+            account = db.scalar(select(Farmer).where(Farmer.email == identifier))
+        else:
+            try:
+                mobile = _normalize_mobile(payload.identifier)
+            except HTTPException:
+                mobile = ""
+            account = db.scalar(select(Farmer).where(Farmer.mobile == mobile)) if mobile else None
+        if not account or not _password_matches(payload.password, account.password_hash):
+            # Keep password work comparable when the account does not exist.
+            if not account:
+                _password_hash(payload.password)
+            raise HTTPException(401, "The mobile/email or password is incorrect.")
+        farmer = {"id": account.id, "full_name": account.full_name, "mobile": account.mobile, "email": account.email}
+        session_version = account.session_version
+    _issue_session(response, "farmer", farmer["id"], session_version)
+    return {"authenticated": True, "role": "farmer", "farmer": farmer}
+
+
+@app.post("/api/logout")
+def logout(response: Response, principal=Depends(require_session)):
+    if principal["role"] == "farmer":
+        with SessionFactory.begin() as db:
+            account = db.get(Farmer, principal["farmer_id"])
+            if account:
+                account.session_version += 1
     response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, secure=get_settings().get("cookie_secure", False), samesite="strict")
     return {"authenticated": False}
+
+
+def _farmer_animal_json(db, animal: Animal):
+    try:
+        key = data_key_bytes(get_settings().get("data_key", ""))
+    except RuntimeError:
+        key = None
+    status = _current_profile_statuses(db).get(animal.id, animal.status)
+    return {
+        "id": animal.id,
+        "muzzle_id": animal.muzzle_id or (encrypted_muzzle_id(animal.id, key) if key else ""),
+        "name": animal.name,
+        "breed": animal.breed,
+        "ear_tag": animal.ear_tag,
+        "sex": animal.sex,
+        "date_of_birth": animal.date_of_birth,
+        "status": status,
+        "created_at": animal.created_at.isoformat(),
+        "images": [{"id": image.id, "width": image.width, "height": image.height, "format": image.image_format, "quality": __import__("json").loads(image.quality_json or "{}")} for image in animal.images],
+    }
+
+
+def _farmer_request_json(item: FarmerRequest):
+    return {"id": item.id, "reference": item.reference, "kind": item.kind, "animal_id": item.animal_id, "description": item.description, "status": item.status, "created_at": item.created_at.isoformat(), "updated_at": item.updated_at.isoformat()}
+
+
+@app.get("/api/farmer/profile")
+def farmer_profile(farmer_id=Depends(require_farmer)):
+    with SessionFactory() as db:
+        account = db.get(Farmer, farmer_id)
+        return {"id": account.id, "full_name": account.full_name, "mobile": account.mobile, "email": account.email, "created_at": account.created_at.isoformat()}
+
+
+@app.patch("/api/farmer/profile")
+def update_farmer_profile(payload: FarmerProfileUpdate, farmer_id=Depends(require_farmer)):
+    mobile = _normalize_mobile(payload.mobile)
+    email = payload.email.lower().strip() if payload.email else None
+    if email and not __import__("re").fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(422, "Enter a valid email address or leave it blank.")
+    try:
+        with SessionFactory.begin() as db:
+            account = db.get(Farmer, farmer_id)
+            account.full_name, account.mobile, account.email = payload.full_name, mobile, email
+    except IntegrityError as exc:
+        raise HTTPException(409, "That mobile number or email address is already used by another account.") from exc
+    return {"updated": True}
+
+
+@app.post("/api/farmer/password")
+def change_farmer_password(payload: FarmerPasswordChange, response: Response, farmer_id=Depends(require_farmer)):
+    with SessionFactory.begin() as db:
+        account = db.get(Farmer, farmer_id)
+        if not _password_matches(payload.current_password, account.password_hash):
+            raise HTTPException(401, "Current password is incorrect.")
+        account.password_hash = _password_hash(payload.new_password)
+        account.session_version += 1
+        version = account.session_version
+    _issue_session(response, "farmer", farmer_id, version)
+    return {"updated": True}
+
+
+@app.get("/api/farmer/dashboard")
+def farmer_dashboard(farmer_id=Depends(require_farmer)):
+    today = date.today().isoformat()
+    soon = (date.today() + timedelta(days=30)).isoformat()
+    with SessionFactory.begin() as db:
+        _refresh_policy_statuses(db)
+        animal_ids = list(db.scalars(select(Animal.id).where(Animal.owner_id == farmer_id)).all())
+        policy_rows = db.execute(select(InsurancePolicy).join(Animal, Animal.id == InsurancePolicy.animal_id).where(Animal.owner_id == farmer_id).order_by(InsurancePolicy.end_date.asc())).scalars().all()
+        requests = db.scalars(select(FarmerRequest).where(FarmerRequest.farmer_id == farmer_id).order_by(FarmerRequest.created_at.desc())).all()
+        history = db.scalars(select(Verification).where(Verification.farmer_id == farmer_id).order_by(Verification.created_at.desc()).limit(5)).all()
+        return {
+            "total_cattle": len(animal_ids),
+            "insured_cattle": len({p.animal_id for p in policy_rows if p.status == "active"}),
+            "upcoming_expirations": [{"animal_id": p.animal_id, "end_date": p.end_date, "policy_number": p.policy_number, "provider": p.provider} for p in policy_rows if p.status == "active" and today <= p.end_date <= soon],
+            "recent_verifications": [{"id": v.id, "animal_id": v.animal_id, "decision": v.decision, "created_at": v.created_at.isoformat()} for v in history],
+            "open_requests": sum(item.status in {"submitted", "under_review"} for item in requests),
+        }
+
+
+@app.get("/api/farmer/animals")
+def farmer_animals(q: str = Query("", max_length=120), farmer_id=Depends(require_farmer)):
+    with SessionFactory() as db:
+        statement = select(Animal).where(Animal.owner_id == farmer_id)
+        if q.strip():
+            needle = f"%{q.strip()}%"
+            statement = statement.where(or_(Animal.name.ilike(needle), Animal.ear_tag.ilike(needle), Animal.breed.ilike(needle), Animal.muzzle_id.ilike(needle)))
+        animals = db.scalars(statement.order_by(Animal.created_at.desc(), Animal.id)).all()
+        return {"items": [_farmer_animal_json(db, animal) for animal in animals], "total": len(animals)}
+
+
+@app.get("/api/farmer/animals/{animal_id}")
+def farmer_animal_detail(animal_id: str, farmer_id=Depends(require_farmer)):
+    with SessionFactory() as db:
+        animal = db.scalar(select(Animal).where(Animal.id == animal_id, Animal.owner_id == farmer_id))
+        if animal is None:
+            raise HTTPException(404, "Animal record not found.")
+        result = _farmer_animal_json(db, animal)
+        result["policies"] = [
+            {key: value for key, value in _policy_json(item).items() if key != "notes"}
+            for item in db.scalars(select(InsurancePolicy).where(InsurancePolicy.animal_id == animal_id)).all()
+        ]
+        result["verifications"] = [{"id": item.id, "decision": item.decision, "similarity": item.similarity, "reason": item.reason, "created_at": item.created_at.isoformat()} for item in db.scalars(select(Verification).where(Verification.farmer_id == farmer_id, Verification.animal_id == animal_id).order_by(Verification.created_at.desc())).all()]
+        return result
+
+
+@app.get("/api/farmer/animals/{animal_id}/images/{image_id}")
+def farmer_animal_image(animal_id: str, image_id: str, farmer_id=Depends(require_farmer)):
+    cfg = get_settings()
+    try:
+        key = data_key_bytes(cfg.get("data_key", ""))
+    except RuntimeError as exc:
+        raise HTTPException(503, "Encrypted image access is not configured.") from exc
+    with SessionFactory() as db:
+        image = db.scalar(select(AnimalImage).join(Animal, Animal.id == AnimalImage.animal_id).where(AnimalImage.id == image_id, AnimalImage.animal_id == animal_id, Animal.owner_id == farmer_id))
+        if image is None:
+            raise HTTPException(404, "Animal image not found.")
+        path = _safe_upload_path(cfg["upload_dir"], image.storage_name)
+        if not path.is_file():
+            raise HTTPException(404, "Animal image not found.")
+        try:
+            raw = decrypt_bytes(path.read_bytes(), key, f"muzzleid-upload:{image.id}")
+        except Exception as exc:
+            log.exception("Farmer reference image failed integrity validation")
+            raise HTTPException(503, "Stored image failed integrity validation.") from exc
+    media_type = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}.get(image.image_format)
+    if not media_type:
+        raise HTTPException(415, "Stored image format is not supported.")
+    return Response(raw, media_type=media_type, headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline"})
+
+
+@app.get("/api/farmer/insurance")
+def farmer_insurance(farmer_id=Depends(require_farmer)):
+    with SessionFactory.begin() as db:
+        _refresh_policy_statuses(db)
+        rows = db.execute(select(InsurancePolicy, Animal).join(Animal, Animal.id == InsurancePolicy.animal_id).where(Animal.owner_id == farmer_id).order_by(InsurancePolicy.end_date.asc())).all()
+        return [{"id": policy.id, "animal_id": policy.animal_id, "provider": policy.provider, "policy_number": policy.policy_number, "coverage_amount": policy.coverage_amount, "start_date": policy.start_date, "end_date": policy.end_date, "status": policy.status, "animal_name": animal.name, "ear_tag": animal.ear_tag, "muzzle_id": animal.muzzle_id} for policy, animal in rows]
+
+
+@app.get("/api/farmer/history")
+def farmer_history(farmer_id=Depends(require_farmer)):
+    with SessionFactory() as db:
+        rows = db.scalars(select(Verification).where(Verification.farmer_id == farmer_id).order_by(Verification.created_at.desc()).limit(100)).all()
+        return [{"id": row.id, "animal_id": row.animal_id, "decision": row.decision, "created_at": row.created_at.isoformat()} for row in rows]
+
+
+@app.get("/api/farmer/requests")
+def farmer_requests(farmer_id=Depends(require_farmer)):
+    with SessionFactory() as db:
+        rows = db.scalars(select(FarmerRequest).where(FarmerRequest.farmer_id == farmer_id).order_by(FarmerRequest.created_at.desc())).all()
+        return [_farmer_request_json(row) for row in rows]
+
+
+@app.get("/api/farmer/requests/{request_id}/events")
+def farmer_request_events(request_id: str, farmer_id=Depends(require_farmer)):
+    with SessionFactory() as db:
+        item = db.scalar(select(FarmerRequest).where(FarmerRequest.id == request_id, FarmerRequest.farmer_id == farmer_id))
+        if item is None:
+            raise HTTPException(404, "Request not found.")
+        rows = db.scalars(select(FarmerRequestEvent).where(FarmerRequestEvent.request_id == request_id).order_by(FarmerRequestEvent.created_at.asc())).all()
+        return [{"previous_status": row.previous_status, "status": row.new_status, "updated_by": row.actor_role, "created_at": row.created_at.isoformat()} for row in rows]
+
+
+@app.post("/api/farmer/requests", status_code=201)
+def create_farmer_request(payload: FarmerRequestCreate, farmer_id=Depends(require_farmer)):
+    with SessionFactory.begin() as db:
+        if payload.animal_id and not db.scalar(select(Animal.id).where(Animal.id == payload.animal_id, Animal.owner_id == farmer_id)):
+            raise HTTPException(404, "Animal record not found.")
+        if payload.kind == "claim":
+            if not payload.animal_id:
+                raise HTTPException(422, "Choose the insured animal for this claim request.")
+            _refresh_policy_statuses(db)
+            policy = db.scalar(select(InsurancePolicy).join(Animal, Animal.id == InsurancePolicy.animal_id).where(InsurancePolicy.animal_id == payload.animal_id, Animal.owner_id == farmer_id, InsurancePolicy.status.in_(["active", "claim_reported"])))
+            if policy is None:
+                raise HTTPException(409, "A claim can be submitted only for an animal with an active policy record.")
+            if policy.status != "active":
+                raise HTTPException(409, "A claim can be submitted only during the policy coverage period.")
+            policy.status = "claim_reported"
+        now = datetime.now(timezone.utc)
+        item = FarmerRequest(id=str(uuid4()), farmer_id=farmer_id, animal_id=payload.animal_id, kind=payload.kind, reference=f"MZ-REQ-{secrets.token_hex(4).upper()}", description=payload.description, status="submitted", created_at=now, updated_at=now)
+        db.add(item)
+        db.flush()
+        db.add(FarmerRequestEvent(id=str(uuid4()), request_id=item.id, previous_status=None, new_status="submitted", actor_role="farmer", created_at=now))
+        result = _farmer_request_json(item)
+    return result
+
+
+@app.get("/api/admin/farmer-requests", dependencies=[Depends(require_admin)])
+def admin_farmer_requests():
+    with SessionFactory() as db:
+        rows = db.execute(select(FarmerRequest, Farmer, Animal).join(Farmer, Farmer.id == FarmerRequest.farmer_id).outerjoin(Animal, Animal.id == FarmerRequest.animal_id).order_by(FarmerRequest.created_at.desc())).all()
+        return [{**_farmer_request_json(item), "farmer_name": farmer.full_name, "farmer_mobile": farmer.mobile, "animal_name": animal.name if animal else None} for item, farmer, animal in rows]
+
+
+@app.patch("/api/admin/farmer-requests/{request_id}", dependencies=[Depends(require_admin)])
+def update_admin_farmer_request(request_id: str, payload: FarmerRequestUpdate):
+    with SessionFactory.begin() as db:
+        item = db.get(FarmerRequest, request_id)
+        if item is None:
+            raise HTTPException(404, "Farmer request not found.")
+        previous_status = item.status
+        item.status = payload.status
+        item.updated_at = datetime.now(timezone.utc)
+        db.add(FarmerRequestEvent(id=str(uuid4()), request_id=item.id, previous_status=previous_status, new_status=item.status, actor_role="admin", created_at=item.updated_at))
+        return _farmer_request_json(item)
 
 static_dir = ROOT / "web"
 if static_dir.exists():
@@ -320,7 +704,7 @@ def home():
     return FileResponse(static_dir / "index.html")
 
 
-@app.get("/api/health", dependencies=[Depends(require_session)])
+@app.get("/api/health", dependencies=[Depends(require_admin)])
 def health():
     cfg = get_settings()
     database_available = False
@@ -350,7 +734,7 @@ def health():
     }
 
 
-@app.get("/api/animals", dependencies=[Depends(require_session)])
+@app.get("/api/animals", dependencies=[Depends(require_admin)])
 def list_animals(q: str = Query("", max_length=120), offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=100), sort: str = Query("created_at", pattern="^(created_at|name|ear_tag)$"), status: Literal["all", "prototype_ready", "pending_model", "reindex_required", "stale_model", "storage_error"] = "all"):
     with SessionFactory() as db:
         statement = select(Animal)
@@ -382,7 +766,7 @@ def list_animals(q: str = Query("", max_length=120), offset: int = Query(0, ge=0
         return {"items": [{"id": a.id, "muzzle_id": a.muzzle_id or (encrypted_muzzle_id(a.id, key) if key else ""), "name": a.name, "breed": a.breed, "ear_tag": a.ear_tag, "status": _effective_profile_status(a.status, image_ids_by_animal.get(a.id, []), versions_by_image, current_version), "image_count": len(image_ids_by_animal.get(a.id, [])), "created_at": a.created_at.isoformat()} for a in animals], "total": total, "offset": offset, "limit": limit}
 
 
-@app.get("/api/animal-options", dependencies=[Depends(require_session)])
+@app.get("/api/animal-options", dependencies=[Depends(require_admin)])
 def animal_options():
     with SessionFactory() as db:
         try:
@@ -393,7 +777,7 @@ def animal_options():
         return [{"id": animal_id, "muzzle_id": muzzle_id or (encrypted_muzzle_id(animal_id, key) if key else ""), "label": " · ".join(part for part in (name or "Unnamed animal", ear_tag, (muzzle_id or (encrypted_muzzle_id(animal_id, key) if key else ""))[:14]) if part)} for animal_id, name, ear_tag, muzzle_id in rows]
 
 
-@app.get("/api/animals/{animal_id}", dependencies=[Depends(require_session)])
+@app.get("/api/animals/{animal_id}", dependencies=[Depends(require_admin)])
 def get_animal(animal_id: str):
     with SessionFactory() as db:
         animal = db.get(Animal, animal_id)
@@ -429,7 +813,7 @@ def get_animal(animal_id: str):
         }
 
 
-@app.patch("/api/animals/{animal_id}", dependencies=[Depends(require_session)])
+@app.patch("/api/animals/{animal_id}", dependencies=[Depends(require_admin)])
 def update_animal(animal_id: str, payload: AnimalUpdate):
     changes = payload.model_dump(exclude_unset=True)
     if "date_of_birth" in changes:
@@ -446,7 +830,7 @@ def update_animal(animal_id: str, payload: AnimalUpdate):
     return {"id": animal_id, "updated": sorted(changes)}
 
 
-@app.delete("/api/animals/{animal_id}", status_code=204, dependencies=[Depends(require_session)])
+@app.delete("/api/animals/{animal_id}", status_code=204, dependencies=[Depends(require_admin)])
 def delete_animal(animal_id: str):
     cfg = get_settings()
     with SessionFactory.begin() as db:
@@ -471,7 +855,7 @@ def delete_animal(animal_id: str):
     return Response(status_code=204)
 
 
-@app.post("/api/animals/{animal_id}/reindex", dependencies=[Depends(require_session)])
+@app.post("/api/animals/{animal_id}/reindex", dependencies=[Depends(require_admin)])
 def reindex_animal(animal_id: str, request: Request):
     """Rebuild this animal's embeddings from its authenticated, encrypted reference images."""
     check_rate_limit(request, "reindex", 6, 60)
@@ -521,7 +905,7 @@ def reindex_animal(animal_id: str, request: Request):
         raise HTTPException(503, "The encrypted reference images could not be reindexed.") from exc
 
 
-@app.get("/api/animals/{animal_id}/images/{image_id}", dependencies=[Depends(require_session)])
+@app.get("/api/animals/{animal_id}/images/{image_id}", dependencies=[Depends(require_admin)])
 def animal_image(animal_id: str, image_id: str):
     cfg = get_settings()
     try:
@@ -546,8 +930,17 @@ def animal_image(animal_id: str, image_id: str):
     return Response(raw, media_type=media_type, headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline"})
 
 
-@app.post("/api/animals", dependencies=[Depends(require_session)])
-async def register_animal(request: Request, name: str = Form("", max_length=120), breed: str = Form("", max_length=120), ear_tag: str = Form("", max_length=120), sex: str = Form(""), date_of_birth: str = Form("", max_length=10), images: list[UploadFile] = File(...), idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=128)):
+def registration_owner(request: Request):
+    principal = require_session(request)
+    if request.url.path == "/api/farmer/animals":
+        return require_farmer(principal)
+    require_admin(principal)
+    return None
+
+
+@app.post("/api/animals")
+@app.post("/api/farmer/animals")
+async def register_animal(request: Request, name: str = Form("", max_length=120), breed: str = Form("", max_length=120), ear_tag: str = Form("", max_length=120), sex: str = Form(""), date_of_birth: str = Form("", max_length=10), images: list[UploadFile] = File(...), idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=128), owner_id=Depends(registration_owner)):
     check_rate_limit(request, "register", 12, 60)
     if not images or len(images) > 8:
         raise HTTPException(422, "Upload between 1 and 8 images.")
@@ -571,6 +964,8 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
             animal = db.get(Animal, prior.animal_id)
             if animal is None:
                 raise HTTPException(409, "This idempotency key references a missing animal record; contact the operator to repair the database.")
+            if owner_id is not None and animal.owner_id != owner_id:
+                raise HTTPException(409, "This registration request key is already in use.")
             mid = animal.muzzle_id or encrypted_muzzle_id(prior.animal_id, encryption_key)
             return {"id": prior.animal_id, "muzzle_id": mid, "name": animal.name, "ear_tag": animal.ear_tag, "status": animal.status, "image_count": len(animal.images), "persisted": True, "replayed": True, "message": "This registration request was already saved."}
     animal_id = str(uuid4())
@@ -618,7 +1013,7 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
                 log.exception("Reference-image embedding failed")
                 raise HTTPException(503, "The biometric model could not process these images. No record was saved; contact the operator.") from exc
         with SessionFactory.begin() as db:
-            animal = Animal(id=animal_id, muzzle_id=muzzle_id, name=name[:120], breed=breed[:120], ear_tag=ear_tag[:120], sex=sex[:32], date_of_birth=date_of_birth[:32], status="prototype_ready" if vectors else "pending_model")
+            animal = Animal(id=animal_id, muzzle_id=muzzle_id, owner_id=owner_id, name=name[:120], breed=breed[:120], ear_tag=ear_tag[:120], sex=sex[:32], date_of_birth=date_of_birth[:32], status="prototype_ready" if vectors else "pending_model")
             db.add(animal)
             # These rows are linked by foreign keys, but ImageEmbedding has no
             # ORM relationship to AnimalImage. Flush the parent records before
@@ -646,13 +1041,15 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
             prior = db.get(RegistrationRequest, idempotency_key)
             if prior:
                 animal = db.get(Animal, prior.animal_id)
+                if owner_id is not None and (animal is None or animal.owner_id != owner_id):
+                    raise HTTPException(409, "This registration request key is already in use.")
                 mid = (animal.muzzle_id or encrypted_muzzle_id(prior.animal_id, encryption_key)) if animal else ""
                 return {"id": prior.animal_id, "muzzle_id": mid, "status": animal.status if animal else "pending_model", "image_count": len(animal.images) if animal else 0, "persisted": animal is not None, "replayed": True, "message": "This registration request was already saved."}
         log.exception("Animal registration failed")
         raise HTTPException(500, "Registration could not be saved.")
 
 
-@app.post("/api/verify", dependencies=[Depends(require_session)])
+@app.post("/api/verify", dependencies=[Depends(require_admin)])
 async def verify_animal(request: Request, image: UploadFile = File(...)):
     check_rate_limit(request, "verify", 30, 60)
     raw = await image.read(get_settings()["max_upload_bytes"] + 1)
@@ -695,7 +1092,64 @@ async def verify_animal(request: Request, image: UploadFile = File(...)):
     return {"id": event_id, "animal_id": animal_id if decision != "UNKNOWN" else None, "decision": decision, "similarity": similarity, "model_version": version, "matched_animal": matched_animal, "prototype_only": True, "message": "Prototype result only. Confirm identity in person; do not use for ownership or insurance decisions."}
 
 
-@app.get("/api/history", dependencies=[Depends(require_session)])
+@app.post("/api/farmer/verify")
+async def farmer_verify_animal(request: Request, image: UploadFile = File(...), farmer_id=Depends(require_farmer)):
+    check_rate_limit(request, "farmer-verify", 20, 60)
+    raw = await image.read(get_settings()["max_upload_bytes"] + 1)
+    if len(raw) > get_settings()["max_upload_bytes"]:
+        raise HTTPException(413, "Image must be 12 MB or smaller.")
+    quality = inspect_image(raw)
+    if not quality["valid"]:
+        raise HTTPException(422, quality["reason"])
+    try:
+        vectors, version, calibration = embed_images([raw])
+    except RuntimeError as exc:
+        raise HTTPException(503, "Biometric verification is unavailable: trained model and calibration artifacts are not configured.") from exc
+    except Exception as exc:
+        log.exception("Farmer verification embedding failed")
+        raise HTTPException(503, "Biometric verification could not process this image.") from exc
+    try:
+        key = data_key_bytes(get_settings().get("data_key", ""))
+        import numpy as np
+        with SessionFactory.begin() as db:
+            rows = db.execute(select(Animal.id, AnimalImage.id, ImageEmbedding.vector_encrypted)
+                              .join(AnimalImage, AnimalImage.animal_id == Animal.id)
+                              .join(ImageEmbedding, ImageEmbedding.image_id == AnimalImage.id)
+                              .where(Animal.owner_id == farmer_id, Animal.status == "prototype_ready", ImageEmbedding.model_version == version)).all()
+            vectors_by_animal = {}
+            for animal_id, image_id, encrypted in rows:
+                blob = base64.urlsafe_b64decode(encrypted.encode("ascii"))
+                vector = np.asarray(__import__("json").loads(decrypt_bytes(blob, key, f"muzzleid-embedding:{image_id}:{version}").decode("utf-8")), dtype=np.float32)
+                vectors_by_animal.setdefault(animal_id, []).append(vector)
+            query = np.asarray(vectors[0], dtype=np.float32)
+            query /= max(float(np.linalg.norm(query)), 1e-12)
+            best_id, best_score = None, None
+            for animal_id, refs in vectors_by_animal.items():
+                center = np.mean(refs, axis=0)
+                norm = float(np.linalg.norm(center))
+                if norm <= 1e-12:
+                    continue
+                score = float(np.dot(query, center / norm))
+                if best_score is None or score > best_score:
+                    best_id, best_score = animal_id, score
+            if best_id is None:
+                decision, similarity = "UNKNOWN", None
+            else:
+                decision = decide(best_score, verified_threshold=float(calibration["verified_threshold"]), review_threshold=float(calibration["review_threshold"]))
+                similarity = best_score
+            event_id = str(uuid4())
+            db.add(Verification(id=event_id, farmer_id=farmer_id, animal_id=best_id if decision != "UNKNOWN" else None, decision=decision, similarity=similarity, reason="Farmer-scoped prototype match; human confirmation required."))
+            if decision == "REVIEW":
+                db.add(OperationalAlert(id=str(uuid4()), fingerprint=f"verification-review:{event_id}", animal_id=best_id, verification_id=event_id, category="verification_review", severity="medium", message="A farmer-scoped prototype match requires human review."))
+            animal = db.get(Animal, best_id) if best_id and decision != "UNKNOWN" else None
+            matched = {"id": animal.id, "name": animal.name, "ear_tag": animal.ear_tag, "muzzle_id": animal.muzzle_id} if animal else None
+    except Exception as exc:
+        log.exception("Farmer-scoped encrypted gallery lookup failed")
+        raise HTTPException(503, "Your enrolled biometric profiles could not be checked. No identity decision was made.") from exc
+    return {"id": event_id, "animal_id": animal.id if animal else None, "decision": decision, "similarity": similarity, "matched_animal": matched, "prototype_only": True, "message": "Prototype suggestion only. Confirm identity in person; do not use as proof of ownership or for insurance decisions."}
+
+
+@app.get("/api/history", dependencies=[Depends(require_admin)])
 def history():
     with SessionFactory() as db:
         rows = db.execute(select(Verification).order_by(Verification.created_at.desc()).limit(200)).scalars().all()
@@ -733,7 +1187,7 @@ def _refresh_policy_statuses(db):
     db.execute(update(InsurancePolicy).where(InsurancePolicy.status == "pending", InsurancePolicy.start_date <= today, InsurancePolicy.end_date >= today).values(status="active"))
 
 
-@app.get("/api/insurance/policies", dependencies=[Depends(require_session)])
+@app.get("/api/insurance/policies", dependencies=[Depends(require_admin)])
 def insurance_policies(status: Literal["all", "pending", "active", "expired", "cancelled", "claim_reported"] = "all"):
     with SessionFactory.begin() as db:
         _refresh_policy_statuses(db)
@@ -761,7 +1215,7 @@ def insurance_policies(status: Literal["all", "pending", "active", "expired", "c
         return result
 
 
-@app.post("/api/insurance/policies", status_code=201, dependencies=[Depends(require_session)])
+@app.post("/api/insurance/policies", status_code=201, dependencies=[Depends(require_admin)])
 def create_insurance_policy(payload: InsurancePolicyCreate):
     if payload.end_date < payload.start_date:
         raise HTTPException(422, "Policy end date must be on or after its start date.")
@@ -783,7 +1237,7 @@ def create_insurance_policy(payload: InsurancePolicyCreate):
     return result
 
 
-@app.patch("/api/insurance/policies/{policy_id}", dependencies=[Depends(require_session)])
+@app.patch("/api/insurance/policies/{policy_id}", dependencies=[Depends(require_admin)])
 def update_insurance_policy(policy_id: str, payload: InsurancePolicyUpdate):
     changes = {field: value for field, value in payload.model_dump(exclude_unset=True).items() if value is not None}
     with SessionFactory.begin() as db:
@@ -810,7 +1264,7 @@ def update_insurance_policy(policy_id: str, payload: InsurancePolicyUpdate):
     return result
 
 
-@app.delete("/api/insurance/policies/{policy_id}", status_code=204, dependencies=[Depends(require_session)])
+@app.delete("/api/insurance/policies/{policy_id}", status_code=204, dependencies=[Depends(require_admin)])
 def delete_insurance_policy(policy_id: str):
     with SessionFactory.begin() as db:
         policy = db.get(InsurancePolicy, policy_id)
@@ -838,7 +1292,7 @@ def _refresh_duplicate_tag_alerts(db):
             alert.resolved_at = datetime.now(timezone.utc)
 
 
-@app.get("/api/alerts", dependencies=[Depends(require_session)])
+@app.get("/api/alerts", dependencies=[Depends(require_admin)])
 def alerts(status: Literal["all", "open", "resolved"] = "open"):
     with SessionFactory.begin() as db:
         _refresh_duplicate_tag_alerts(db)
@@ -871,7 +1325,7 @@ def alerts(status: Literal["all", "open", "resolved"] = "open"):
         } for row in rows]
 
 
-@app.patch("/api/alerts/{alert_id}", dependencies=[Depends(require_session)])
+@app.patch("/api/alerts/{alert_id}", dependencies=[Depends(require_admin)])
 def update_alert(alert_id: str, payload: AlertUpdate):
     with SessionFactory.begin() as db:
         alert = db.get(OperationalAlert, alert_id)
@@ -882,7 +1336,7 @@ def update_alert(alert_id: str, payload: AlertUpdate):
         return {"id": alert.id, "status": alert.status, "resolved_at": alert.resolved_at.isoformat() if alert.resolved_at else None}
 
 
-@app.get("/api/analytics", dependencies=[Depends(require_session)])
+@app.get("/api/analytics", dependencies=[Depends(require_admin)])
 def analytics():
     since = datetime.now(timezone.utc) - timedelta(days=30)
     today = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
@@ -928,7 +1382,7 @@ def _csv_response(filename, columns, rows):
     return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
-@app.get("/api/reports/animals.csv", dependencies=[Depends(require_session)])
+@app.get("/api/reports/animals.csv", dependencies=[Depends(require_admin)])
 def report_animals():
     with SessionFactory() as db:
         statuses = _current_profile_statuses(db)
@@ -953,7 +1407,7 @@ def report_animals():
         return _csv_response("muzzleid-animals.csv", ("id", "muzzle_id", "name", "ear_tag", "breed", "sex", "date_of_birth", "profile_status", "created_at"), rows)
 
 
-@app.get("/api/reports/verifications.csv", dependencies=[Depends(require_session)])
+@app.get("/api/reports/verifications.csv", dependencies=[Depends(require_admin)])
 def report_verifications():
     with SessionFactory() as db:
         records = db.execute(select(Verification.id, Verification.animal_id, Verification.decision, Verification.similarity, Verification.reason, Verification.created_at).order_by(Verification.created_at.desc())).all()
@@ -983,7 +1437,7 @@ def report_verifications():
         return _csv_response("muzzleid-verifications.csv", ("verification_id", "animal_id", "animal_name", "ear_tag", "muzzle_id", "decision", "similarity", "reason", "created_at"), rows)
 
 
-@app.get("/api/reports/insurance.csv", dependencies=[Depends(require_session)])
+@app.get("/api/reports/insurance.csv", dependencies=[Depends(require_admin)])
 def report_insurance():
     with SessionFactory.begin() as db:
         _refresh_policy_statuses(db)
@@ -1021,7 +1475,7 @@ def report_insurance():
         )
 
 
-@app.get("/api/settings", dependencies=[Depends(require_session)])
+@app.get("/api/settings", dependencies=[Depends(require_admin)])
 def settings_status():
     cfg = get_settings()
     pipeline = model_state()

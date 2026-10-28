@@ -187,3 +187,77 @@ body { background: var(--bg-canvas); color: var(--text-main); }
 }
 
 @media (max-width: 760px) { .analytics-charts { grid-template-columns: 1fr; } }
+
+/* Role-aware entry and farmer workspace */
+.auth-gate { background: radial-gradient(circle at 85% 8%, #e8f3ec 0, #f7f8f5 42%, #eef3ee 100%); }
+.auth-brand { position: absolute; top: 28px; left: clamp(20px, 5vw, 72px); display: flex; align-items: center; gap: 10px; color: var(--text-main); font-size: 20px; font-weight: 700; }
+.auth-brand .brand-mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; color: #fff; background: var(--primary); }
+.auth-brand strong { color: var(--primary); }
+.role-card { width: min(100%, 900px); border: 1px solid var(--border-subtle); box-shadow: 0 16px 48px rgba(23, 33, 27, .10); }
+.role-card h1, .auth-subpage h1 { margin: 4px 0 8px; color: var(--text-main); font-size: 28px; letter-spacing: -.03em; }
+.role-card > p:not(.eyebrow), .auth-subpage > p { color: var(--text-secondary); }
+.role-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 26px; }
+.role-option { padding: 22px; border: 1px solid var(--border-subtle); border-radius: 12px; background: #fff; }
+.role-option h2 { margin: 12px 0 4px; color: var(--text-main); font-size: 17px; }
+.role-option p { min-height: 42px; margin: 0 0 18px; color: var(--text-secondary); font-size: 13px; }
+.role-symbol { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: var(--primary-light); color: var(--primary); }
+.role-symbol svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.auth-subpage { border: 1px solid var(--border-subtle); box-shadow: 0 16px 48px rgba(23, 33, 27, .10); }
+.auth-subpage[hidden] { display: none !important; }
+.auth-back, .link-button { padding: 0; border: 0; background: none; color: var(--primary); cursor: pointer; font: inherit; }
+.auth-back { margin-bottom: 14px; font-size: 13px; }
+.link-button { font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
+.auth-switch { margin: 14px 0; text-align: center; font-size: 13px; }
+.optional-label { color: var(--text-muted); font-weight: 400; }
+.password-field { position: relative; display: flex; align-items: center; }
+.password-field input { padding-right: 58px; }
+.password-toggle { position: absolute; right: 10px; border: 0; background: none; color: var(--primary); font-weight: 600; cursor: pointer; }
+.farmer-shell { min-height: 100vh; background: var(--bg-canvas); }
+.farmer-shell[hidden] { display: none !important; }
+body.role-farmer > .sidebar, body.role-farmer > .main { display: none !important; }
+body.role-farmer > #farmer-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); }
+body.role-admin > #farmer-shell, body:not(.authenticated) > #farmer-shell { display: none !important; }
+.farmer-sidebar { position: sticky; top: 0; display: flex; flex-direction: column; height: 100vh; padding: 20px 14px; background: #fff; border-right: 1px solid var(--border-subtle); }
+.farmer-brand { margin: 2px 6px 26px; }
+.farmer-sidebar nav { display: grid; gap: 4px; }
+.farmer-sidebar .nav-item { text-decoration: none; }
+.farmer-side-note { margin-top: auto; padding: 12px; border-radius: 9px; background: var(--primary-light); color: var(--primary-text); font-size: 11px; }
+.farmer-main { min-width: 0; }
+.farmer-topbar { position: sticky; top: 0; z-index: 20; }
+.farmer-content { display: grid; gap: 18px; max-width: 1440px; margin: 0 auto; }
+.farmer-welcome { padding: 4px 0 2px; }
+.farmer-welcome h1 { margin: 0 0 4px; font-size: 27px; letter-spacing: -.03em; }
+.farmer-welcome p:last-child { margin: 0; color: var(--text-secondary); }
+.farmer-metrics .metric { display: grid; gap: 8px; }
+.farmer-metrics .metric > span { color: var(--text-secondary); font-size: 13px; }
+.farmer-metrics .metric > strong { font-size: 28px; }
+.farmer-metrics .metric > a { color: var(--primary); font-size: 12px; font-weight: 600; text-decoration: none; }
+.farmer-action-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.farmer-greeting { color: var(--text-secondary); font-size: 13px; font-weight: 600; }
+.farmer-search { display: grid; gap: 6px; max-width: 420px; margin-bottom: 18px; color: var(--text-secondary); font-weight: 600; }
+.farmer-content [data-farmer-view] > .panel, .farmer-content section.panel { margin-bottom: 0; }
+.farmer-content .form-panel { max-width: 900px; }
+.verify-preview-wrap { margin: 14px 0; text-align: center; }
+.verify-preview-wrap img { max-width: min(100%, 420px); max-height: 280px; border: 1px solid var(--border-subtle); border-radius: 10px; object-fit: contain; }
+.farmer-content textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border-medium); border-radius: 8px; font: inherit; }
+.farmer-content hr { margin: 28px 0; border: 0; border-top: 1px solid var(--border-subtle); }
+.farmer-content [data-farmer-view="animals"] #farmer-animal-detail { padding-top: 12px; }
+@media (max-width: 850px) {
+  body.role-farmer > #farmer-shell { grid-template-columns: 1fr; }
+  .farmer-sidebar { position: sticky; z-index: 30; height: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+  .farmer-brand { margin: 0 0 10px; }
+  .farmer-sidebar nav { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
+  .farmer-sidebar nav .nav-item { flex: 0 0 auto; padding: 8px 10px; white-space: nowrap; font-size: 12px; }
+  .farmer-side-note { display: none; }
+}
+@media (max-width: 560px) {
+  .auth-gate { align-content: center; padding: 72px 14px 16px; }
+  .auth-brand { top: 16px; left: 16px; }
+  .auth-card { padding: 22px; }
+  .role-card { padding: 22px; }
+  .role-options { grid-template-columns: 1fr; gap: 10px; margin-top: 16px; }
+  .role-option { padding: 16px; }
+  .role-option p { min-height: 0; }
+  .farmer-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .farmer-greeting { display: none; }
+}

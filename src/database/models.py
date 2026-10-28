@@ -21,6 +21,7 @@ class Animal(Base):
     sex: Mapped[str] = mapped_column(String(32), default="")
     date_of_birth: Mapped[str] = mapped_column(String(32), default="")
     organization_id: Mapped[str] = mapped_column(String(120), default="default")
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("farmers.id", ondelete="SET NULL"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending_model")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     images: Mapped[list["AnimalImage"]] = relationship(back_populates="animal", cascade="all, delete-orphan")
@@ -58,6 +59,7 @@ class Verification(Base):
     __tablename__ = "verifications"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     animal_id: Mapped[str | None] = mapped_column(ForeignKey("animals.id"), nullable=True)
+    farmer_id: Mapped[str | None] = mapped_column(ForeignKey("farmers.id", ondelete="SET NULL"), nullable=True, index=True)
     decision: Mapped[str] = mapped_column(String(16))
     similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
     reason: Mapped[str] = mapped_column(Text, default="")
@@ -91,6 +93,42 @@ class OperationalAlert(Base):
     status: Mapped[str] = mapped_column(String(16), default="open", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Farmer(Base):
+    """Self-registered customer account; existing animals remain unowned."""
+    __tablename__ = "farmers"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    full_name: Mapped[str] = mapped_column(String(120))
+    mobile: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    email: Mapped[str | None] = mapped_column(String(254), unique=True, nullable=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    session_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class FarmerRequest(Base):
+    """Farmer-submitted claim or service request with operator-managed status."""
+    __tablename__ = "farmer_requests"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    farmer_id: Mapped[str] = mapped_column(ForeignKey("farmers.id", ondelete="CASCADE"), index=True)
+    animal_id: Mapped[str | None] = mapped_column(ForeignKey("animals.id", ondelete="SET NULL"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    reference: Mapped[str] = mapped_column(String(24), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), default="submitted")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class FarmerRequestEvent(Base):
+    __tablename__ = "farmer_request_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    request_id: Mapped[str] = mapped_column(ForeignKey("farmer_requests.id", ondelete="CASCADE"), index=True)
+    previous_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    new_status: Mapped[str] = mapped_column(String(24))
+    actor_role: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 def make_session_factory():

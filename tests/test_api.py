@@ -8,7 +8,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
 
 from src.api import main as api
-from src.database.models import Animal, AnimalImage, Base
+from src.database.models import Animal, AnimalImage, Farmer, Base
 from src.inference import engine as inference_engine
 
 
@@ -290,3 +290,122 @@ def test_encrypted_muzzle_id_lifecycle_and_insurance_report(service):
     assert "POL-9999" in insurance_csv.text
     assert muzzle_id in insurance_csv.text
     assert "AgriCover National" in insurance_csv.text
+
+
+def test_farmer_accounts_own_records_and_cannot_reach_admin_or_other_farmer_data(service):
+    admin, factory, _, _ = service
+    legacy = admin.post(
+        "/api/animals",
+        headers={"Idempotency-Key": "farmer-legacy-admin-record"},
+        data={"name": "Pre-existing", "ear_tag": "OLD-1"},
+        files=[("images", ("legacy.jpg", jpeg(), "image/jpeg"))],
+    ).json()
+    signup = admin.post("/api/farmer/signup", json={
+        "full_name": "Farmer One", "mobile": "+91 98765 43210", "email": "one@example.test", "password": "a-strong-farmer-password"
+    })
+    assert signup.status_code == 201, signup.text
+    first_id = signup.json()["farmer"]["id"]
+    assert admin.get("/api/session").json()["role"] == "farmer"
+    assert admin.get("/api/animals").status_code == 403
+    assert admin.get("/api/analytics").status_code == 403
+    assert admin.get("/api/reports/animals.csv").status_code == 403
+
+    first_animal = admin.post(
+        "/api/farmer/animals",
+        headers={"Idempotency-Key": "farmer-one-register-key"},
+        data={"name": "My cow", "ear_tag": "OWN-1", "owner_id": "attacker-controlled"},
+        files=[("images", ("cow.jpg", jpeg(color=(20, 90, 160)), "image/jpeg"))],
+    )
+    assert first_animal.status_code == 200, first_animal.text
+    first_animal_id = first_animal.json()["id"]
+    assert first_animal.json()["muzzle_id"].startswith("MZID-")
+
+    with TestClient(api.app) as second:
+        other_signup = second.post("/api/farmer/signup", json={
+            "full_name": "Farmer Two", "mobile": "+91 98765 43211", "email": "two@example.test", "password": "another-strong-password"
+        })
+        assert other_signup.status_code == 201
+        second_animal = second.post(
+            "/api/farmer/animals",
+            headers={"Idempotency-Key": "farmer-two-register-key"},
+            data={"name": "Other cow", "ear_tag": "OWN-2"},
+            files=[("images", ("other.jpg", jpeg(color=(190, 40, 30)), "image/jpeg"))],
+        )
+        assert second_animal.status_code == 200
+        second_id = second_animal.json()["id"]
+        assert second.get("/api/farmer/animals").json()["total"] == 1
+        assert second.get(f"/api/farmer/animals/{first_animal_id}").status_code == 404
+
+    listed = admin.get("/api/farmer/animals").json()
+    assert listed["total"] == 1
+    assert listed["items"][0]["id"] == first_animal_id
+    assert admin.get(f"/api/farmer/animals/{second_id}").status_code == 404
+    assert admin.get(f"/api/farmer/animals/{legacy['id']}").status_code == 404
+    assert admin.get(f"/api/animals/{second_id}").status_code == 403
+    role_tamper = admin.patch("/api/farmer/profile", json={
+        "full_name": "Farmer One", "mobile": "+919876543210", "email": "one@example.test", "role": "admin"
+    })
+    assert role_tamper.status_code == 422
+    assert admin.get("/api/session").json()["role"] == "farmer"
+    assert admin.post("/api/farmer/requests", json={"kind": "support", "animal_id": second_id, "description": "This is not my animal"}).status_code == 404
+    created_request = admin.post("/api/farmer/requests", json={"kind": "support", "animal_id": first_animal_id, "description": "Please help update my animal details."})
+    assert created_request.status_code == 201, created_request.text
+    assert admin.get("/api/farmer/requests").json()[0]["reference"] == created_request.json()["reference"]
+    assert admin.post("/api/farmer/requests", json={"kind": "claim", "animal_id": first_animal_id, "description": "No policy exists for this animal yet."}).status_code == 409
+
+    duplicate = admin.post("/api/farmer/signup", json={
+        "full_name": "Farmer Duplicate", "mobile": "+919876543210", "email": "duplicate@example.test", "password": "another-strong-password"
+    })
+    assert duplicate.status_code == 409
+    with factory() as db:
+        assert db.get(Animal, legacy["id"]).owner_id is None
+        assert db.get(Animal, first_animal_id).owner_id == first_id
+        farmer = db.get(Farmer, first_id)
+        assert farmer.password_hash != "a-strong-farmer-password"
+        assert farmer.password_hash.startswith("scrypt$")
+
+
+def test_farmer_login_password_change_and_logout(service):
+    client, _, _, _ = service
+    password = "initial-farmer-password"
+    signup = client.post("/api/farmer/signup", json={"full_name": "Login Farmer", "mobile": "+919876543299", "password": password})
+    assert signup.status_code == 201
+    assert client.post("/api/logout").status_code == 200
+    assert client.get("/api/session").json()["authenticated"] is False
+    assert client.post("/api/farmer/login", json={"identifier": "+919876543299", "password": "wrong-password"}).status_code == 401
+    login = client.post("/api/farmer/login", json={"identifier": "+91 98765 43299", "password": password})
+    assert login.status_code == 200
+    assert client.get("/api/session").json()["role"] == "farmer"
+    changed = client.post("/api/farmer/password", json={"current_password": password, "new_password": "replacement-farmer-password"})
+    assert changed.status_code == 200
+    assert client.post("/api/logout").status_code == 200
+    assert client.post("/api/farmer/login", json={"identifier": "+919876543299", "password": password}).status_code == 401
+    assert client.post("/api/farmer/login", json={"identifier": "+919876543299", "password": "replacement-farmer-password"}).status_code == 200
+
+
+def test_claim_requests_require_owned_insured_cattle_and_record_operator_status_changes(service):
+    farmer, _, _, _ = service
+    account = farmer.post("/api/farmer/signup", json={"full_name": "Insured Farmer", "mobile": "+919876543288", "password": "farmer-insurance-password"})
+    assert account.status_code == 201
+    animal = farmer.post(
+        "/api/farmer/animals", headers={"Idempotency-Key": "farmer-insurance-animal"},
+        data={"name": "Insured cow"}, files=[("images", ("insured.jpg", jpeg(), "image/jpeg"))],
+    ).json()
+    today = __import__("datetime").date.today()
+    with TestClient(api.app) as operator:
+        assert operator.post("/api/login", json={"password": "test-operator-password-2026"}).status_code == 200
+        policy = operator.post("/api/insurance/policies", json={
+            "animal_id": animal["id"], "provider": "Test insurer", "policy_number": "FARMER-POL-1", "coverage_amount": 5000,
+            "start_date": today.isoformat(), "end_date": today.replace(year=today.year + 1).isoformat(),
+        })
+        assert policy.status_code == 201
+        claim = farmer.post("/api/farmer/requests", json={"kind": "claim", "animal_id": animal["id"], "description": "Please review an accident report for this insured animal."})
+        assert claim.status_code == 201, claim.text
+        assert farmer.get("/api/farmer/insurance").json()[0]["status"] == "claim_reported"
+        queue = operator.get("/api/admin/farmer-requests").json()
+        item = next(row for row in queue if row["id"] == claim.json()["id"])
+        assert item["farmer_name"] == "Insured Farmer"
+        assert operator.patch(f"/api/admin/farmer-requests/{item['id']}", json={"status": "under_review"}).json()["status"] == "under_review"
+        events = farmer.get(f"/api/farmer/requests/{claim.json()['id']}/events")
+        assert events.status_code == 200
+        assert [event["status"] for event in events.json()] == ["submitted", "under_review"]
