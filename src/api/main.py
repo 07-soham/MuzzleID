@@ -28,7 +28,7 @@ from src.database.models import Animal, AnimalImage, ImageEmbedding, Registratio
 from src.inference.engine import embed_images, faiss_available, match_embedding, model_state
 from src.inference.decision import decide
 from src.inference.faiss_gallery import ensure_gallery_index
-from src.inference.quality import inspect_image
+from src.inference.quality import process_image
 from src.security.crypto import data_key_bytes, decrypt_bytes, encrypt_bytes, encrypted_muzzle_id
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -880,7 +880,7 @@ def reindex_animal(animal_id: str, request: Request):
                 raw = decrypt_bytes(path.read_bytes(), key, f"muzzleid-upload:{image.id}")
                 if sha256(raw).hexdigest() != image.content_sha256:
                     raise HTTPException(409, "A stored reference image failed its integrity check.")
-                quality = inspect_image(raw)
+                raw, quality = process_image(raw)
                 if not quality["valid"]:
                     raise HTTPException(409, "A stored reference image is no longer valid; repair the record before reindexing.")
                 raw_images.append(raw)
@@ -978,7 +978,7 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
             raw = await upload.read(cfg["max_upload_bytes"] + 1)
             if len(raw) > cfg["max_upload_bytes"]:
                 raise HTTPException(413, "Each image must be 12 MB or smaller.")
-            quality = inspect_image(raw)
+            raw, quality = process_image(raw)
             if not quality["valid"]:
                 raise HTTPException(422, quality["reason"])
             digest = sha256(raw).hexdigest()
@@ -1055,7 +1055,7 @@ async def verify_animal(request: Request, image: UploadFile = File(...)):
     raw = await image.read(get_settings()["max_upload_bytes"] + 1)
     if len(raw) > get_settings()["max_upload_bytes"]:
         raise HTTPException(413, "Image must be 12 MB or smaller.")
-    quality = inspect_image(raw)
+    raw, quality = process_image(raw)
     if not quality["valid"]:
         raise HTTPException(422, quality["reason"])
     try:
@@ -1098,7 +1098,7 @@ async def farmer_verify_animal(request: Request, image: UploadFile = File(...), 
     raw = await image.read(get_settings()["max_upload_bytes"] + 1)
     if len(raw) > get_settings()["max_upload_bytes"]:
         raise HTTPException(413, "Image must be 12 MB or smaller.")
-    quality = inspect_image(raw)
+    raw, quality = process_image(raw)
     if not quality["valid"]:
         raise HTTPException(422, quality["reason"])
     try:

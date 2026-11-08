@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 
 from src.inference.decision import decide
-from src.inference.quality import inspect_image
+from src.inference.quality import inspect_image, process_image
 
 
 def image_bytes(size=(256, 256)):
@@ -24,6 +24,21 @@ def test_quality_accepts_readable_image():
 def test_quality_rejects_small_and_corrupt_images():
     assert inspect_image(image_bytes((64, 64)))["valid"] is False
     assert inspect_image(b"not an image")["valid"] is False
+
+
+@pytest.mark.parametrize("source_format", ["BMP", "GIF", "TIFF", "PNG", "WEBP"])
+def test_supported_raster_formats_are_normalized_to_jpeg(source_format):
+    source = BytesIO()
+    Image.new("RGB", (256, 256), color=(120, 90, 70)).save(source, format=source_format)
+
+    normalized, result = process_image(source.getvalue())
+
+    assert result["valid"] is True
+    assert result["format"] == "JPEG"
+    assert normalized[:3] == b"\xff\xd8\xff"
+    with Image.open(BytesIO(normalized)) as decoded:
+        assert decoded.format == "JPEG"
+        assert decoded.size == (256, 256)
 
 
 def test_decision_requires_explicit_valid_thresholds():

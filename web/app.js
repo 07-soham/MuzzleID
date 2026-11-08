@@ -445,7 +445,6 @@ registerForm.addEventListener('submit', async event => {
   const files = [...uploadInput.files];
   if (!files.length || files.length > 8) { result.className = 'form-result error'; result.textContent = 'Choose between 1 and 8 reference images.'; return; }
   if (files.some(file => file.size > 12 * 1024 * 1024)) { result.className = 'form-result error'; result.textContent = 'Each image must be 12 MB or smaller.'; return; }
-  if (files.some(file => !['image/jpeg', 'image/png', 'image/webp'].includes(file.type))) { result.className = 'form-result error'; result.textContent = 'Use JPEG, PNG or WebP images.'; return; }
   submitInProgress = true;
   const submit = registerForm.querySelector('[type=submit]');
   submit.disabled = true; submit.dataset.label = submit.textContent; submit.textContent = 'Saving record…';
@@ -495,11 +494,11 @@ function previewVerificationFile(file) {
   $('#verify-result').textContent = '';
   $('#verify-result').className = 'form-result';
   if (!file) { verifyPreviewWrap.hidden = true; verifyPreviewWrap.style.display = 'none'; return; }
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 * 1024) {
+  if (file.size > 12 * 1024 * 1024) {
     verifyInput.value = '';
     verifyPreviewWrap.hidden = true; verifyPreviewWrap.style.display = 'none';
     $('#verify-result').className = 'form-result error';
-    $('#verify-result').textContent = file.size > 12 * 1024 * 1024 ? 'Choose an image that is 12 MB or smaller.' : 'Use a JPEG, PNG or WebP image.';
+    $('#verify-result').textContent = 'Choose an image that is 12 MB or smaller.';
     return;
   }
   verifyPreviewUrl = URL.createObjectURL(file);
@@ -512,7 +511,7 @@ verifyDropzone.addEventListener('dragover', event => { event.preventDefault(); v
 verifyDropzone.addEventListener('dragleave', () => verifyDropzone.classList.remove('dragover'));
 verifyDropzone.addEventListener('drop', event => {
   event.preventDefault(); verifyDropzone.classList.remove('dragover');
-  const file = [...event.dataTransfer.files].find(item => item.type.startsWith('image/'));
+  const file = [...event.dataTransfer.files][0];
   if (!file) return;
   const transfer = new DataTransfer(); transfer.items.add(file); verifyInput.files = transfer.files;
   previewVerificationFile(file);
@@ -631,7 +630,7 @@ farmerRegisterDrop.addEventListener('drop', event => { event.preventDefault(); f
 $('#farmer-register-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = event.currentTarget; const result = $('#farmer-register-result'); const button = form.querySelector('[type=submit]'); const files = [...farmerRegisterInput.files];
   if (!files.length || files.length > 8) { result.className = 'form-result error'; result.textContent = 'Choose between 1 and 8 images.'; return; }
-  if (files.some(file => file.size > 12 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type))) { result.className = 'form-result error'; result.textContent = 'Use JPEG, PNG, or WebP images up to 12 MB each.'; return; }
+  if (files.some(file => file.size > 12 * 1024 * 1024)) { result.className = 'form-result error'; result.textContent = 'Each image must be 12 MB or smaller.'; return; }
   button.disabled = true; button.textContent = 'Saving cattle record…'; result.className = 'form-result'; result.textContent = 'Validating and securely saving your record…';
   try {
     const data = await MuzzleApi.registerFarmerAnimal(new FormData(form), farmerRegisterKey);
@@ -647,14 +646,14 @@ const farmerVerifyInput = $('#farmer-verify-file'); let farmerVerifyUrl = null;
 function previewFarmerVerification(file) {
   if (farmerVerifyUrl) URL.revokeObjectURL(farmerVerifyUrl); farmerVerifyUrl = null; const wrap = $('#farmer-verify-preview-wrap');
   if (!file) { wrap.hidden = true; return; }
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 12 * 1024 * 1024) { farmerVerifyInput.value = ''; wrap.hidden = true; $('#farmer-verify-result').className = 'form-result error'; $('#farmer-verify-result').textContent = file.size > 12 * 1024 * 1024 ? 'Choose an image up to 12 MB.' : 'Use JPEG, PNG, or WebP.'; return; }
+  if (file.size > 12 * 1024 * 1024) { farmerVerifyInput.value = ''; wrap.hidden = true; $('#farmer-verify-result').className = 'form-result error'; $('#farmer-verify-result').textContent = 'Choose an image up to 12 MB.'; return; }
   farmerVerifyUrl = URL.createObjectURL(file); $('#farmer-verify-preview').src = farmerVerifyUrl; wrap.hidden = false;
 }
 farmerVerifyInput.addEventListener('change', () => previewFarmerVerification(farmerVerifyInput.files[0]));
 const farmerVerifyDrop = $('#farmer-verify-dropzone');
 farmerVerifyDrop.addEventListener('dragover', event => { event.preventDefault(); farmerVerifyDrop.classList.add('dragover'); });
 farmerVerifyDrop.addEventListener('dragleave', () => farmerVerifyDrop.classList.remove('dragover'));
-farmerVerifyDrop.addEventListener('drop', event => { event.preventDefault(); farmerVerifyDrop.classList.remove('dragover'); const file = [...event.dataTransfer.files].find(item => item.type.startsWith('image/')); if (file) { const transfer = new DataTransfer(); transfer.items.add(file); farmerVerifyInput.files = transfer.files; previewFarmerVerification(file); } });
+farmerVerifyDrop.addEventListener('drop', event => { event.preventDefault(); farmerVerifyDrop.classList.remove('dragover'); const file = [...event.dataTransfer.files][0]; if (file) { const transfer = new DataTransfer(); transfer.items.add(file); farmerVerifyInput.files = transfer.files; previewFarmerVerification(file); } });
 $('#farmer-verify-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); const result = $('#farmer-verify-result'); button.disabled = true; button.textContent = 'Checking…'; result.className = 'form-result'; result.textContent = 'Checking against your enrolled cattle profiles…';
   try {
