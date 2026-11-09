@@ -1,4 +1,5 @@
 from io import BytesIO
+import base64
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,8 +9,9 @@ from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
 
 from src.api import main as api
-from src.database.models import Animal, AnimalImage, Farmer, Base
+from src.database.models import Animal, AnimalImage, Farmer, ImageEmbedding, Base
 from src.inference import engine as inference_engine
+from src.security.crypto import data_key_bytes, encrypt_bytes
 
 
 def jpeg(size=(320, 240), color=(70, 110, 80)):
@@ -126,6 +128,44 @@ def test_registry_search_details_and_unavailable_verification(service):
     unavailable = client.post("/api/verify", files={"image": ("query.jpg", jpeg(), "image/jpeg")})
     assert unavailable.status_code == 503
     assert "trained model" in unavailable.json()["detail"]
+
+
+def test_verification_returns_three_distinct_candidates_and_fails_closed(service, monkeypatch):
+    client, factory, _, _ = service
+    from src.inference import faiss_gallery
+    faiss_gallery._CACHE = None
+    key = data_key_bytes(api.get_settings()["data_key"])
+    query = [0.0] * 512
+    query[0] = 1.0
+    with factory.begin() as db:
+        for number, score in enumerate((0.98, 0.91, 0.84, 0.77)):
+            animal_id = f"candidate-animal-{number}"
+            image_id = f"candidate-image-{number}"
+            vector = [0.0] * 512
+            vector[0] = score
+            vector[number + 1] = (1 - score * score) ** .5
+            animal = Animal(id=animal_id, name=f"Candidate {number}", muzzle_id=f"MZID-{number}", status="prototype_ready")
+            image = AnimalImage(id=image_id, animal_id=animal_id, storage_name=f"{image_id}.enc", content_sha256=f"{number:064x}", width=320, height=240, image_format="JPEG", quality_json="{}")
+            encoded = base64.urlsafe_b64encode(encrypt_bytes(__import__("json").dumps(vector).encode(), key, f"muzzleid-embedding:{image_id}:test-version")).decode("ascii")
+            db.add_all([animal, image])
+            db.flush()
+            db.add(ImageEmbedding(image_id=image_id, model_version="test-version", vector_encrypted=encoded))
+    monkeypatch.setattr(api, "embed_images", lambda _images: ([query], "test-version", {"review_threshold": .5, "verified_threshold": .8}))
+
+    response = client.post("/api/verify", files={"image": ("query.jpeg", jpeg(), "image/jpeg")})
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "REVIEW"  # Missing verification_approved must never produce VERIFIED.
+    assert len(result["candidates"]) == 3
+    assert len({item["animal_id"] for item in result["candidates"]}) == 3
+    assert [item["rank"] for item in result["candidates"]] == [1, 2, 3]
+    assert all(item["status"] == "REVIEW" for item in result["candidates"])
+    assert all(item["reference_image_url"].startswith("/api/animals/") for item in result["candidates"])
+    assert result["muzzle_detection"]["available"] is False
+    with factory() as db:
+        event = db.scalar(select(api.Verification).order_by(api.Verification.created_at.desc()))
+        assert event.decision == "REVIEW"
 
 
 def test_private_api_requires_operator_session(monkeypatch, tmp_path):

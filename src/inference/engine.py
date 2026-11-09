@@ -64,7 +64,7 @@ def model_state():
         if loaded is None:
             return {"available": False, "reason": "A trained checkpoint and matching calibration file are required."}
         _, calibration, version, _ = loaded
-        return {"available": True, "model_version": version, "calibration_status": calibration["status"], "limitations": calibration.get("limitations", [])}
+        return {"available": True, "model_version": version, "calibration_status": calibration["status"], "verification_approved": bool(calibration.get("verification_approved", False)), "limitations": calibration.get("limitations", [])}
     except Exception as exc:
         return {"available": False, "reason": str(exc)}
 
@@ -109,5 +109,7 @@ def match_embedding(vector: list[float], gallery: list[tuple[str, str]], *, inde
         return None, None, "UNKNOWN"
     verified = float(calibration["verified_threshold"])
     review = float(calibration["review_threshold"])
-    decision = decide(score, verified_threshold=verified, review_threshold=review)
+    # This legacy helper has no second-candidate margin or independent reference
+    # support evidence. Keep it fail-closed even for a high cosine score.
+    decision = "REVIEW" if score >= review else "UNKNOWN"
     return animal_id, score, decision

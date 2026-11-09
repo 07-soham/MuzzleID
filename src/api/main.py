@@ -25,9 +25,9 @@ from sqlalchemy import select, func, or_, text, delete, update
 from sqlalchemy.exc import IntegrityError
 from src.config import ROOT, get_settings
 from src.database.models import Animal, AnimalImage, ImageEmbedding, RegistrationRequest, Verification, InsurancePolicy, OperationalAlert, Farmer, FarmerRequest, FarmerRequestEvent, make_session_factory
-from src.inference.engine import embed_images, faiss_available, match_embedding, model_state
-from src.inference.decision import decide
-from src.inference.faiss_gallery import ensure_gallery_index
+from src.inference.engine import embed_images, faiss_available, model_state
+from src.inference.decision import decide_candidates, candidate_statuses, decision_reason
+from src.inference.faiss_gallery import ensure_gallery_index, search_cached_gallery, search_gallery, add_gallery_entries, invalidate_gallery_index
 from src.inference.quality import process_image
 from src.security.crypto import data_key_bytes, decrypt_bytes, encrypt_bytes, encrypted_muzzle_id
 
@@ -111,7 +111,7 @@ def _load_current_gallery(db, model_version, encryption_key):
     for animal_id, image_id, encrypted in rows:
         ciphertext = __import__("base64").urlsafe_b64decode(encrypted.encode("ascii"))
         vector_json = decrypt_bytes(ciphertext, encryption_key, f"muzzleid-embedding:{image_id}:{model_version}").decode("utf-8")
-        gallery.append((animal_id, vector_json))
+        gallery.append((animal_id, image_id, vector_json))
     return gallery
 
 
@@ -726,6 +726,7 @@ def health():
         "gallery_index_persisted": get_settings()["index_path"].is_file(),
         "calibrated_thresholds_available": model_available,
         "verification_available": engine_ready,
+        "automatic_verification_enabled": bool(engine_ready and pipeline.get("verification_approved", False)),
         "biometric_engine_reason": None if engine_ready else (ENGINE_STARTUP_STATE.get("reason") or pipeline.get("reason") or "Biometric runtime dependencies are unavailable."),
         "decision_thresholds": "Prototype calibration" if model_available else "Not available",
         "model_version": pipeline.get("model_version"),
@@ -852,6 +853,7 @@ def delete_animal(animal_id: str):
         db.delete(animal)
     for path in paths:
         path.unlink(missing_ok=True)
+    invalidate_gallery_index()
     return Response(status_code=204)
 
 
@@ -897,6 +899,7 @@ def reindex_animal(animal_id: str, request: Request):
                 else:
                     existing.vector_encrypted = encrypted
             animal.status = "prototype_ready"
+        invalidate_gallery_index()
         return {"id": animal_id, "status": "prototype_ready", "model_version": version, "image_count": len(images), "reindexed": True}
     except HTTPException:
         raise
@@ -1025,6 +1028,12 @@ async def register_animal(request: Request, name: str = Form("", max_length=120)
             if vectors:
                 db.add_all([ImageEmbedding(image_id=item.id, model_version=model_version, vector_encrypted=__import__("base64").urlsafe_b64encode(encrypt_bytes(__import__("json").dumps(vector, separators=(",", ":")).encode(), encryption_key, f"muzzleid-embedding:{item.id}:{model_version}")).decode("ascii")) for (_, item), vector in zip(saved, vectors)])
             db.add(RegistrationRequest(idempotency_key=idempotency_key, animal_id=animal_id))
+        if vectors:
+            try:
+                add_gallery_entries([(animal_id, item.id, vector) for (_, item), vector in zip(saved, vectors)], model_version=model_version, index_path=cfg["index_path"], encryption_key=encryption_key)
+            except Exception:
+                invalidate_gallery_index()
+                log.exception("Incremental HNSW update failed; the index will be rebuilt from the database on next verification")
         profile_status = "prototype_ready" if vectors else "pending_model"
         message = "Animal record and biometric profile are saved." if vectors else "Animal record and images are saved. Biometric profile creation is pending a configured model."
         return {"id": animal_id, "muzzle_id": muzzle_id, "name": name, "ear_tag": ear_tag, "status": profile_status, "image_count": len(saved), "persisted": True, "replayed": False, "message": message}
@@ -1059,7 +1068,7 @@ async def verify_animal(request: Request, image: UploadFile = File(...)):
     if not quality["valid"]:
         raise HTTPException(422, quality["reason"])
     try:
-        vectors, version, _ = embed_images([raw])
+        vectors, version, calibration = embed_images([raw])
     except RuntimeError as exc:
         raise HTTPException(503, "Biometric verification is unavailable: trained model and matching calibration artifacts are not configured.") from exc
     except Exception as exc:
@@ -1067,29 +1076,58 @@ async def verify_animal(request: Request, image: UploadFile = File(...)):
         raise HTTPException(503, "Biometric verification is unavailable because the model failed to process the image.") from exc
     try:
         encryption_key = data_key_bytes(get_settings().get("data_key", ""))
-        matched_animal = None
+        candidates = search_cached_gallery(vectors[0], model_version=version, k=3)
         with SessionFactory.begin() as db:
-            gallery = _load_current_gallery(db, version, encryption_key)
-            animal_id, similarity, decision = match_embedding(vectors[0], gallery, index_path=get_settings()["index_path"], key=encryption_key)
+            if candidates is None:
+                gallery = _load_current_gallery(db, version, encryption_key)
+                candidates = search_gallery(vectors[0], gallery, index_path=get_settings()["index_path"], encryption_key=encryption_key, model_version=version, k=3)
+            decision = decide_candidates(candidates, calibration)
+            statuses = candidate_statuses(candidates, calibration, decision)
+            hydrated = []
+            for rank, (candidate, status) in enumerate(zip(candidates, statuses), start=1):
+                animal = db.get(Animal, candidate["animal_id"])
+                image = db.get(AnimalImage, candidate["reference_image_id"])
+                if animal is None or image is None or image.animal_id != animal.id:
+                    continue
+                hydrated.append({
+                    "rank": rank,
+                    "animal_id": animal.id,
+                    "muzzle_id": animal.muzzle_id or encrypted_muzzle_id(animal.id, encryption_key),
+                    "name": animal.name,
+                    "ear_tag": animal.ear_tag,
+                    "breed": animal.breed,
+                    "similarity": candidate["similarity"],
+                    "reference_support": candidate["support_count"],
+                    "reference_image_ids": candidate["reference_image_ids"],
+                    "reference_image_url": f"/api/animals/{animal.id}/images/{image.id}",
+                    "status": status,
+                })
+            top = hydrated[0] if hydrated else None
+            animal_id = top["animal_id"] if top and decision != "UNKNOWN" else None
+            similarity = top["similarity"] if top else None
             event_id = str(uuid4())
-            db.add(Verification(id=event_id, animal_id=animal_id if decision != "UNKNOWN" else None, decision=decision, similarity=similarity, reason="Prototype full-image embedding with training-identity image-split calibration; human review required."))
+            reason = decision_reason(candidates, calibration, decision)
+            db.add(Verification(id=event_id, animal_id=animal_id, decision=decision, similarity=similarity, reason=reason))
             if decision == "REVIEW":
-                db.add(OperationalAlert(id=str(uuid4()), fingerprint=f"verification-review:{event_id}", animal_id=animal_id, verification_id=event_id, category="verification_review", severity="medium", message="A prototype match requires human review. Verify the animal in person."))
-            if animal_id:
-                matched_record = db.get(Animal, animal_id)
-                if matched_record:
-                    matched_animal = {
-                        "id": matched_record.id,
-                        "muzzle_id": matched_record.muzzle_id or encrypted_muzzle_id(matched_record.id, encryption_key),
-                        "name": matched_record.name,
-                        "ear_tag": matched_record.ear_tag,
-                        "breed": matched_record.breed,
-                        "image_id": matched_record.images[0].id if matched_record.images else None,
-                    }
+                db.flush()  # Ensure the alert's verification foreign key exists first.
+                db.add(OperationalAlert(id=str(uuid4()), fingerprint=f"verification-review:{event_id}", animal_id=animal_id, verification_id=event_id, category="verification_review", severity="medium", message=reason))
     except Exception as exc:
         log.exception("Encrypted gallery lookup failed")
         raise HTTPException(503, "The encrypted biometric gallery is unavailable. No identity decision was made.") from exc
-    return {"id": event_id, "animal_id": animal_id if decision != "UNKNOWN" else None, "decision": decision, "similarity": similarity, "model_version": version, "matched_animal": matched_animal, "prototype_only": True, "message": "Prototype result only. Confirm identity in person; do not use for ownership or insurance decisions."}
+    return {
+        "id": event_id,
+        "animal_id": animal_id,
+        "decision": decision,
+        "similarity": similarity,
+        "model_version": version,
+        "matched_animal": hydrated[0] if hydrated and decision != "UNKNOWN" else None,
+        "candidates": hydrated,
+        "quality_assessment": quality["quality"],
+        "muzzle_detection": {"available": False, "status": "MANUAL_REVIEW", "message": "No validated muzzle detector is installed; the full image is used only for candidate ranking."},
+        "decision_reason": reason,
+        "prototype_only": True,
+        "message": "Candidate ranking is not identity proof. Confirm identity in person; results cannot establish ownership or insurance eligibility.",
+    }
 
 
 @app.post("/api/farmer/verify")
@@ -1120,33 +1158,36 @@ async def farmer_verify_animal(request: Request, image: UploadFile = File(...), 
             for animal_id, image_id, encrypted in rows:
                 blob = base64.urlsafe_b64decode(encrypted.encode("ascii"))
                 vector = np.asarray(__import__("json").loads(decrypt_bytes(blob, key, f"muzzleid-embedding:{image_id}:{version}").decode("utf-8")), dtype=np.float32)
-                vectors_by_animal.setdefault(animal_id, []).append(vector)
+                vectors_by_animal.setdefault(animal_id, []).append((image_id, vector))
             query = np.asarray(vectors[0], dtype=np.float32)
             query /= max(float(np.linalg.norm(query)), 1e-12)
-            best_id, best_score = None, None
-            for animal_id, refs in vectors_by_animal.items():
-                center = np.mean(refs, axis=0)
-                norm = float(np.linalg.norm(center))
-                if norm <= 1e-12:
-                    continue
-                score = float(np.dot(query, center / norm))
-                if best_score is None or score > best_score:
-                    best_id, best_score = animal_id, score
-            if best_id is None:
-                decision, similarity = "UNKNOWN", None
-            else:
-                decision = decide(best_score, verified_threshold=float(calibration["verified_threshold"]), review_threshold=float(calibration["review_threshold"]))
-                similarity = best_score
+            candidate_rows = []
+            for candidate_id, refs in vectors_by_animal.items():
+                scored = sorted(((float(np.dot(query, vector / max(float(np.linalg.norm(vector)), 1e-12))), image_id) for image_id, vector in refs), reverse=True)
+                if scored:
+                    candidate_rows.append({"animal_id": candidate_id, "similarity": scored[0][0], "reference_image_id": scored[0][1], "support_count": sum(score >= float(calibration["review_threshold"]) for score, _ in scored), "support_similarities": [score for score, _ in scored], "reference_image_ids": [image_id for _, image_id in scored[:3]]})
+            candidate_rows.sort(key=lambda row: row["similarity"], reverse=True)
+            candidates = candidate_rows[:3]
+            decision = decide_candidates(candidates, calibration)
+            statuses = candidate_statuses(candidates, calibration, decision)
+            similarity = candidates[0]["similarity"] if candidates else None
+            best_id = candidates[0]["animal_id"] if candidates else None
             event_id = str(uuid4())
             db.add(Verification(id=event_id, farmer_id=farmer_id, animal_id=best_id if decision != "UNKNOWN" else None, decision=decision, similarity=similarity, reason="Farmer-scoped prototype match; human confirmation required."))
             if decision == "REVIEW":
+                db.flush()  # Ensure the alert's verification foreign key exists first.
                 db.add(OperationalAlert(id=str(uuid4()), fingerprint=f"verification-review:{event_id}", animal_id=best_id, verification_id=event_id, category="verification_review", severity="medium", message="A farmer-scoped prototype match requires human review."))
-            animal = db.get(Animal, best_id) if best_id and decision != "UNKNOWN" else None
-            matched = {"id": animal.id, "name": animal.name, "ear_tag": animal.ear_tag, "muzzle_id": animal.muzzle_id} if animal else None
+            candidate_payload = []
+            for rank, (candidate, status) in enumerate(zip(candidates, statuses), start=1):
+                animal = db.get(Animal, candidate["animal_id"])
+                if animal is None or animal.owner_id != farmer_id:
+                    continue
+                candidate_payload.append({"rank": rank, "animal_id": animal.id, "id": animal.id, "name": animal.name, "ear_tag": animal.ear_tag, "muzzle_id": animal.muzzle_id, "similarity": candidate["similarity"], "reference_support": candidate["support_count"], "reference_image_ids": candidate["reference_image_ids"], "reference_image_url": f"/api/farmer/animals/{animal.id}/images/{candidate['reference_image_id']}", "status": status})
+            matched = candidate_payload[0] if candidate_payload and decision != "UNKNOWN" else None
     except Exception as exc:
         log.exception("Farmer-scoped encrypted gallery lookup failed")
         raise HTTPException(503, "Your enrolled biometric profiles could not be checked. No identity decision was made.") from exc
-    return {"id": event_id, "animal_id": animal.id if animal else None, "decision": decision, "similarity": similarity, "matched_animal": matched, "prototype_only": True, "message": "Prototype suggestion only. Confirm identity in person; do not use as proof of ownership or for insurance decisions."}
+    return {"id": event_id, "animal_id": matched["animal_id"] if matched else None, "decision": decision, "similarity": similarity, "matched_animal": matched, "candidates": candidate_payload, "quality_assessment": quality["quality"], "muzzle_detection": {"available": False, "status": "MANUAL_REVIEW", "message": "No validated muzzle detector is installed; the full image is used only for candidate ranking."}, "decision_reason": decision_reason(candidates, calibration, decision), "prototype_only": True, "message": "Candidate ranking is not identity proof. Confirm identity in person; results cannot establish ownership or insurance eligibility."}
 
 
 @app.get("/api/history", dependencies=[Depends(require_admin)])

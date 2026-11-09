@@ -471,14 +471,22 @@ registerForm.addEventListener('submit', async event => {
   }
 });
 
+function renderCandidateComparison(response, queryImageUrl) {
+  const candidates = response.candidates || [];
+  const quality = response.quality_assessment || {};
+  const warningText = quality.warnings?.length ? quality.warnings.map(item => esc(item.replaceAll('_', ' '))).join(', ') : 'No capture-quality warnings';
+  const detector = response.muzzle_detection?.message || 'Muzzle localization unavailable';
+  const cards = candidates.length ? `<div class="candidate-grid">${candidates.map(candidate => `<article class="candidate-card"><header><span class="candidate-rank">#${candidate.rank}</span><span class="candidate-status status-${esc(candidate.status.toLowerCase())}">${esc(candidate.status)}</span></header><h3>${esc(candidate.name || 'Unnamed animal')}</h3><p class="candidate-id">${esc(candidate.muzzle_id || candidate.animal_id)}</p><div class="candidate-comparison"><figure><img src="${esc(queryImageUrl || '')}" alt="Submitted query image"><figcaption>Submitted image</figcaption></figure><figure><img loading="lazy" src="${esc(candidate.reference_image_url)}" alt="Registered reference image for ${esc(candidate.name || 'animal')}"/><figcaption>Registered muzzle reference</figcaption></figure></div><dl><div><dt>Similarity</dt><dd>${Number(candidate.similarity).toFixed(4)}</dd></div><div><dt>Rank</dt><dd>${candidate.rank}</dd></div><div><dt>Reference images in support</dt><dd>${candidate.reference_support}</dd></div></dl><p class="candidate-caveat">Cosine similarity is not a probability.</p></article>`).join('')}</div>` : '<p class="empty-state compact">No registered candidates were available.</p>';
+  return `<section class="verification-summary decision-${esc(response.decision.toLowerCase())}"><div class="verification-summary-heading"><div><p class="eyebrow">OVERALL DECISION</p><h2>${esc(response.decision)}</h2></div><p>${esc(response.decision_reason || response.message || '')}</p></div><div class="quality-summary"><strong>Image quality:</strong> ${warningText}. ${esc(detector)}</div></section><h3>Top matches</h3>${cards}`;
+}
+
 $('#verify-form').addEventListener('submit', async event => {
   event.preventDefault(); const result = $('#verify-result'); const submit = event.currentTarget.querySelector('[type=submit]');
   submit.disabled = true; result.className = 'form-result'; result.textContent = 'Checking image and pipeline availability…';
   try {
     const response = await MuzzleApi.verify(new FormData(event.currentTarget));
-    const matched = response.matched_animal;
     result.className = `form-result verification-result decision-${String(response.decision).toLowerCase()}`;
-    result.innerHTML = `<div class="verification-outcome"><span class="tag decision-${String(response.decision).toLowerCase()}">${esc(response.decision)}</span><div><strong>${matched ? esc(matched.name || 'Matched animal') : 'No enrolled match'}</strong>${matched ? `<p>Ear tag ${esc(matched.ear_tag || 'not provided')} · Muzzle ID <code>${esc(matched.muzzle_id || 'Unavailable')}</code></p>` : ''}${response.similarity == null ? '' : `<p>Similarity score: <strong>${Number(response.similarity).toFixed(4)}</strong></p>`}<small>${esc(response.message || 'Prototype result only. Confirm identity in person; do not use for ownership or insurance decisions.')}</small></div></div>`;
+    $('#verify-candidates').innerHTML = renderCandidateComparison(response, verifyPreviewUrl);
   } catch (error) { result.className = 'form-result error'; result.textContent = error.message; }
   finally { submit.disabled = false; }
 });
@@ -657,9 +665,9 @@ farmerVerifyDrop.addEventListener('drop', event => { event.preventDefault(); far
 $('#farmer-verify-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); const result = $('#farmer-verify-result'); button.disabled = true; button.textContent = 'Checking…'; result.className = 'form-result'; result.textContent = 'Checking against your enrolled cattle profiles…';
   try {
-    const data = await MuzzleApi.verifyFarmerAnimal(new FormData(event.currentTarget)); const animal = data.matched_animal;
+    const data = await MuzzleApi.verifyFarmerAnimal(new FormData(event.currentTarget));
     result.className = `form-result verification-result decision-${data.decision.toLowerCase()}`;
-    result.innerHTML = `<div class="verification-outcome"><span class="tag decision-${data.decision.toLowerCase()}">${esc(data.decision)}</span><div><strong>${animal ? esc(animal.name || 'Your matched animal') : data.decision === 'UNKNOWN' ? 'No enrolled match' : 'Manual review needed'}</strong>${animal ? `<p>Ear tag ${esc(animal.ear_tag || 'not provided')} · Muzzle ID <code>${esc(animal.muzzle_id || 'Unavailable')}</code></p><a href="#farmer/animals/${encodeURIComponent(animal.id)}">Open animal record →</a>` : ''}<small>${esc(data.message)}</small></div></div>`;
+    $('#farmer-verify-candidates').innerHTML = renderCandidateComparison(data, farmerVerifyUrl);
     renderFarmerHistory(await MuzzleApi.farmerHistory(), $('#farmer-history'));
   } catch (error) { result.className = 'form-result error'; result.textContent = error.message; }
   finally { button.disabled = false; button.textContent = 'Check identity'; }

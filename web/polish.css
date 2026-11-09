@@ -242,6 +242,33 @@ body.role-admin > #farmer-shell, body:not(.authenticated) > #farmer-shell { disp
 .farmer-content textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border-medium); border-radius: 8px; font: inherit; }
 .farmer-content hr { margin: 28px 0; border: 0; border-top: 1px solid var(--border-subtle); }
 .farmer-content [data-farmer-view="animals"] #farmer-animal-detail { padding-top: 12px; }
+.verification-candidates { display: grid; gap: 14px; margin-top: 16px; }
+.verification-summary { padding: 16px; border: 1px solid var(--border-subtle); border-left: 4px solid #b7791f; border-radius: 10px; background: #fffaf0; }
+.verification-summary.decision-unknown { border-left-color: #b42318; background: #fff5f4; }
+.verification-summary.decision-verified { border-left-color: #177245; background: #effaf3; }
+.verification-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.verification-summary-heading h2 { margin: 2px 0 0; font-size: 24px; }
+.verification-summary-heading > p { max-width: 600px; color: var(--text-secondary); font-size: 13px; }
+.quality-summary { margin-top: 10px; color: var(--text-secondary); font-size: 12px; }
+.candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.candidate-card { min-width: 0; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 10px; background: #fff; }
+.candidate-card > header { display: flex; justify-content: space-between; align-items: center; }
+.candidate-rank { color: var(--text-secondary); font-size: 12px; font-weight: 700; }
+.candidate-status { padding: 4px 8px; border-radius: 999px; font-size: 10px; font-weight: 750; }
+.candidate-status.status-verified { color: #146c43; background: #e7f6ec; }
+.candidate-status.status-review { color: #8a5a00; background: #fff2cc; }
+.candidate-status.status-unknown { color: #a32a20; background: #fde9e7; }
+.candidate-card h3 { margin: 10px 0 2px; font-size: 15px; }
+.candidate-id { margin: 0 0 10px; color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.candidate-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.candidate-comparison figure { min-width: 0; margin: 0; }
+.candidate-comparison img { width: 100%; height: 150px; object-fit: contain; border: 1px solid var(--border-subtle); border-radius: 7px; background: #f6f8f6; }
+.candidate-comparison figcaption { padding-top: 4px; color: var(--text-secondary); font-size: 10px; }
+.candidate-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 12px 0 4px; }
+.candidate-card dl div { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; }
+.candidate-card dt { color: var(--text-secondary); }
+.candidate-card dd { margin: 0; font-weight: 700; }
+.candidate-caveat { margin: 5px 0 0; color: var(--text-muted); font-size: 10px; }
 @media (max-width: 850px) {
   body.role-farmer > #farmer-shell { grid-template-columns: 1fr; }
   .farmer-sidebar { position: sticky; z-index: 30; height: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--border-subtle); }

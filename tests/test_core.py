@@ -3,7 +3,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from src.inference.decision import decide
+from src.inference.decision import decide, decide_candidates, candidate_statuses
 from src.inference.quality import inspect_image, process_image
 
 
@@ -48,5 +48,21 @@ def test_decision_requires_explicit_valid_thresholds():
     assert decide(-.2, verified_threshold=.1, review_threshold=-.3) == "REVIEW"
     with pytest.raises(ValueError):
         decide(.8, verified_threshold=.7, review_threshold=.75)
+
+
+def test_candidate_decisions_fail_closed_without_approval_and_check_margin_and_support():
+    calibration = {"review_threshold": .5, "verified_threshold": .8}
+    candidates = [
+        {"animal_id": "a", "similarity": .91, "support_count": 3},
+        {"animal_id": "b", "similarity": .90, "support_count": 2},
+        {"animal_id": "c", "similarity": .60, "support_count": 1},
+    ]
+    assert decide_candidates(candidates, calibration) == "REVIEW"
+    calibration.update({"verification_approved": True, "minimum_candidate_margin": .05, "minimum_reference_support": 2})
+    assert decide_candidates(candidates, calibration) == "REVIEW"
+    candidates[1]["similarity"] = .80
+    assert decide_candidates(candidates, calibration) == "VERIFIED"
+    assert candidate_statuses(candidates, calibration, "VERIFIED") == ["VERIFIED", "REVIEW", "REVIEW"]
+    assert decide_candidates([], calibration) == "UNKNOWN"
     with pytest.raises(ValueError):
         decide(float("nan"), verified_threshold=.9, review_threshold=.75)

@@ -89,8 +89,10 @@ def main():
 
             known_result = client.post("/api/verify", files={"image": ("known.jpg", jpeg(known_paths[0]), "image/jpeg")})
             assert_status(known_result, 200, "known animal verification")
-            if known_result.json()["decision"] != "VERIFIED" or known_result.json()["animal_id"] != animal_id:
-                raise AssertionError(f"Known animal failed to verify: {known_result.json()}")
+            if known_result.json()["decision"] != "REVIEW" or known_result.json()["animal_id"] != animal_id:
+                raise AssertionError(f"Unapproved prototype calibration did not fail closed to REVIEW: {known_result.json()}")
+            if len(known_result.json()["candidates"]) != 1 or known_result.json()["candidates"][0]["animal_id"] != animal_id:
+                raise AssertionError(f"Candidate retrieval did not return the enrolled identity: {known_result.json()}")
 
             unknown_result = client.post("/api/verify", files={"image": ("unknown.jpg", jpeg(unknown_path), "image/jpeg")})
             assert_status(unknown_result, 200, "unknown animal verification")
@@ -118,14 +120,14 @@ def main():
                 raise AssertionError("Animal record did not survive service restart.")
             recovered = client.post("/api/verify", files={"image": ("known.jpg", jpeg(known_paths[0]), "image/jpeg")})
             assert_status(recovered, 200, "post-restart verification")
-            if recovered.json()["decision"] != "VERIFIED" or index_path.read_bytes() != saved_index:
+            if recovered.json()["decision"] != "REVIEW" or index_path.read_bytes() != saved_index:
                 raise AssertionError("The encrypted FAISS index was not recovered after restart.")
 
             index_path.write_bytes(b"corrupt cache")
             faiss_gallery._CACHE = None
             rebuilt = client.post("/api/verify", files={"image": ("known.jpg", jpeg(known_paths[0]), "image/jpeg")})
             assert_status(rebuilt, 200, "corrupted-index rebuild verification")
-            if rebuilt.json()["decision"] != "VERIFIED" or index_path.read_bytes() == b"corrupt cache":
+            if rebuilt.json()["decision"] != "REVIEW" or index_path.read_bytes() == b"corrupt cache":
                 raise AssertionError("Corrupted FAISS cache was not rebuilt from the database.")
             history = client.get("/api/history").json()
             if len(history) < 4:
